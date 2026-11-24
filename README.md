@@ -21,6 +21,13 @@ bun run start
 
 Open `http://127.0.0.1:3000/` in a browser (set `PORT=4173` to override). All PWA assets in `dist/public/` use relative `./` paths and can also be deployed directly to static hosting without the Bun server.
 
+## Project layout
+
+- `public/`: Source static assets (`index.html`, `styles.css`, `data/stops.tsv`).
+- `dist/public/`: Runnable built output produced by `bun run build:pwa` (copies `public/` plus bundled scripts and vendor assets such as `leaflet.css`; run static asset audits such as `impeccable detect` against `dist/public/`).
+- `src/**/__tests__/*.test.ts`: Unit tests executed by Bun (`bun run test:ci`).
+- `e2e/*.test.ts`: Browser acceptance tests executed by Playwright (`bun run test:e2e`, which builds and serves `dist/public/`).
+
 ## Commands
 
 | Command                     | Purpose                                                                                       |
@@ -46,4 +53,4 @@ Open `http://127.0.0.1:3000/` in a browser (set `PORT=4173` to override). All PW
 
 - [`leaflet`](https://leafletjs.com/) (`BSD-2-Clause`): Interactive map rendering, uniform-opacity SVG pane for 500 m catchment unions, offline GeoJSON coastline layer, and OneMap tile integration.
 
-See [AGENTS.md](AGENTS.md) for contributor instructions.
+See [AGENTS.md](AGENTS.md) for contributor instructions and [CODING_STANDARDS.md](CODING_STANDARDS.md) for architecture and review standards.

@@ -15,14 +15,18 @@ const TEST_FILE_PATTERNS = [
   /\.test\.ts\.snap$/,
 ]
 
-const isTestFile = (filePath: string): boolean =>
-  TEST_FILE_PATTERNS.some((pattern) => pattern.test(filePath))
+const DATA_FILE_PATTERNS = [/^public\/data\//, /\.tsv$/]
+
+const isExcludedFromSizeCheck = (filePath: string): boolean =>
+  [...TEST_FILE_PATTERNS, ...DATA_FILE_PATTERNS].some((pattern) =>
+    pattern.test(filePath),
+  )
 
 const sourceFiles = [
   ...created_files,
   ...modified_files,
   ...deleted_files,
-].filter((file) => !isTestFile(file))
+].filter((file) => !isExcludedFromSizeCheck(file))
 
 const filesChangedCount = sourceFiles.length
 

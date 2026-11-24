@@ -64,6 +64,7 @@ const fulfillJson = (route: Route, status: number, body: unknown) =>
     body: JSON.stringify(body),
   })
 
+// Service Worker (`sw.js`) fetches bypass `page.route(...)`, so use `page.context().route(...)`.
 const stubTilesAndInventory = async (page: Page): Promise<void> => {
   await page
     .context()
@@ -226,6 +227,12 @@ test.describe('House Hunter PWA acceptance', () => {
 
     await page.goto('/')
 
+    await expect(page.locator('#signed-in-bar')).toBeHidden()
+    await expect(page.locator('#station-field-group')).toBeHidden()
+    await expect(page.locator('#stop-search-btn')).toBeHidden()
+    await expect(page.locator('#offline-banner')).toBeHidden()
+    await expect(page.locator('#selected-stop-card')).toBeHidden()
+
     // Verify pre-search Singapore date (Friday 2026-05-29 -> skips Sun/Mon Vesak holiday -> 2026-06-02),
     // inventory date, and keep-open notice.
     await expect(page.locator('#planned-search-date')).toHaveText('2026-06-02')
@@ -261,6 +268,14 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(
       page.locator('.stop-plaque-marker[data-stop-id="44011"]'),
     ).toBeVisible()
+
+    const zonePaneOpacity = await page
+      .locator('.leaflet-commuteZone-pane')
+      .evaluate((el) => getComputedStyle(el).opacity)
+    expect(zonePaneOpacity).toBe('0.34')
+    expect(
+      await page.locator('.leaflet-commuteZone-pane svg path').count(),
+    ).toBeGreaterThanOrEqual(2)
 
     // Release pass 2 so 65009 (disconnected patch) qualifies and search completes.
     pass2Gate.resolve()
