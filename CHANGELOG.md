@@ -7,6 +7,8 @@
 - Replace `Makefile` with `justfile`; use `just install` for dependency and hook setup.
 - Move the commute design to `docs/DESIGN.md` and update the README link.
 - Replace the CLI design with the client-only [PWA product spec](.scratch/commute-zones/spec.md) and [commute glossary](GLOSSARY.md).
+- Implement the client-only House Hunter PWA: Singapore public/observed holiday calendar, exact millisecond commute-rule engine, direct OneMap browser client, breadth-first island-wide search scheduler, bundled 5,426-stop inventory (`public/data/stops.tsv`), Leaflet 500 m union map with offline coastline fallback, synced accessible stops list, Service Worker shell caching, and offline retention of the last completed result.
+- Add Bun unit tests for pure commute rules and static asset serving plus Playwright real-browser acceptance tests (`e2e/commute-zones.test.ts`), along with [PRODUCT.md](PRODUCT.md), [DESIGN.md](DESIGN.md), and `.impeccable/` artifacts.
 
 ## 2026-11-06
 

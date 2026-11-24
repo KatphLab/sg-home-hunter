@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1B5E4B" />
+    <title>House Hunter: Singapore Commute Zones</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
+    <link rel="stylesheet" href="./leaflet.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-mobile-view="search">
+    <a class="skip-link" href="#qualifying-stops-list">Skip to qualifying stops list</a>
+
+    <header class="app-header">
+      <div class="brand-group">
+        <svg class="brand-mark" viewBox="0 0 28 28" width="24" height="24" aria-hidden="true">
+          <rect width="28" height="28" rx="6" fill="#F6F7F5" />
+          <circle cx="14" cy="14" r="9" fill="#1B5E4B" fill-opacity="0.22" stroke="#1B5E4B" stroke-width="1.5" />
+          <circle cx="14" cy="14" r="3.5" fill="#C83E2B" />
+        </svg>
+        <h1 class="brand-title">House Hunter</h1>
+      </div>
+
+      <div class="header-meta">
+        <span id="connectivity-badge" class="status-tag status-tag--online">Online</span>
+        <span id="inventory-badge" class="meta-pill tabular">Inventory: loading…</span>
+      </div>
+    </header>
+
+    <div id="offline-banner" class="offline-banner" role="status" hidden>
+      Offline: showing your last completed search. New searches require an internet connection.
+    </div>
+
+    <main class="workspace">
+      <aside class="rail" aria-label="Search controls and qualifying stops">
+        <section class="panel-section" id="section-account" aria-labelledby="heading-account">
+          <div class="section-head">
+            <h2 id="heading-account">OneMap account</h2>
+            <span id="account-status-pill" class="status-tag status-tag--muted">Not connected</span>
+          </div>
+
+          <form id="signin-form" class="stack-sm">
+            <div class="field-grid">
+              <label class="field">
+                <span>Email</span>
+                <input
+                  id="onemap-email"
+                  type="email"
+                  autocomplete="username"
+                  placeholder="you@example.com"
+                  required
+                />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input
+                  id="onemap-password"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="OneMap password"
+                  required
+                />
+              </label>
+            </div>
+            <div class="action-row">
+              <button id="signin-btn" type="submit" class="btn btn--secondary">
+                Connect OneMap
+              </button>
+              <span class="field-hint">Sent directly to OneMap from your browser.</span>
+            </div>
+          </form>
+
+          <div id="signed-in-bar" class="signed-in-bar" hidden>
+            <span id="signed-in-email" class="signed-in-email"></span>
+            <button id="signout-btn" type="button" class="btn btn--ghost">Disconnect</button>
+          </div>
+
+          <p id="auth-error" class="inline-alert inline-alert--error" role="alert" hidden></p>
+        </section>
+
+        <section class="panel-section" id="section-search" aria-labelledby="heading-search">
+          <div class="section-head">
+            <h2 id="heading-search">Workplace &amp; commute</h2>
+          </div>
+
+          <form id="search-form" class="stack-sm">
+            <fieldset class="segmented-fieldset">
+              <legend class="sr-only">Workplace type</legend>
+              <label class="segmented-option">
+                <input type="radio" name="workplace-kind" value="postal" checked />
+                <span>Postal code</span>
+              </label>
+              <label class="segmented-option">
+                <input type="radio" name="workplace-kind" value="station" />
+                <span>MRT / LRT station</span>
+              </label>
+            </fieldset>
+
+            <div id="postal-field-group" class="field">
+              <label for="postal-input">Six-digit Singapore postal code</label>
+              <input
+                id="postal-input"
+                type="text"
+                inputmode="numeric"
+                maxlength="6"
+                placeholder="e.g. 018989"
+                autocomplete="postal-code"
+              />
+            </div>
+
+            <div id="station-field-group" class="stack-xs" hidden>
+              <label class="field">
+                <span>Filter MRT / LRT stations</span>
+                <input
+                  id="station-filter-input"
+                  type="search"
+                  placeholder="Type station ID or name, e.g. NS17 or Bishan"
+                />
+              </label>
+              <label class="field">
+                <span>Exact line-specific station</span>
+                <select id="station-select"></select>
+              </label>
+            </div>
+
+            <div class="field-row-2">
+              <label class="field">
+                <span>Office start</span>
+                <input id="office-start-input" type="time" value="09:00" required />
+              </label>
+              <label class="field">
+                <span>Ride cap (min)</span>
+                <input
+                  id="ride-cap-input"
+                  type="number"
+                  min="1"
+                  max="180"
+                  step="1"
+                  value="30"
+                  required
+                />
+              </label>
+            </div>
+            <p class="field-hint">
+              Ride cap counts time aboard vehicles only, excluding walking and transfers.
+            </p>
+
+            <dl class="presearch-facts tabular">
+              <div class="fact-item">
+                <dt>Search date</dt>
+                <dd id="planned-search-date">Pending</dd>
+              </div>
+              <div class="fact-item">
+                <dt>Inventory date</dt>
+                <dd id="planned-inventory-date">Loading</dd>
+              </div>
+            </dl>
+
+            <p class="keep-open-notice" role="note">
+              <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="1.75" />
+                <path d="M10 6v5m0 3h.01" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+              </svg>
+              <span>Keep the app open while searching. Closing it stops the search.</span>
+            </p>
+
+            <div class="action-row">
+              <button id="start-search-btn" type="submit" class="btn btn--primary" disabled>
+                Start search
+              </button>
+              <button id="stop-search-btn" type="button" class="btn btn--danger" hidden>
+                Stop search
+              </button>
+            </div>
+          </form>
+
+          <p id="search-error" class="inline-alert inline-alert--error" role="alert" hidden></p>
+        </section>
+
+        <section class="panel-section" id="section-progress" aria-labelledby="heading-progress">
+          <div class="section-head">
+            <h2 id="heading-progress">Search status</h2>
+            <span id="result-status-tag" class="status-tag status-tag--muted">No search yet</span>
+          </div>
+
+          <div id="live-status-region" class="sr-only" aria-live="polite"></div>
+
+          <div class="ledger-counts tabular">
+            <div class="ledger-cell">
+              <span class="ledger-label">Stops tried</span>
+              <strong id="stops-tried-value" class="ledger-value">0 / 0</strong>
+            </div>
+            <div class="ledger-cell">
+              <span class="ledger-label">Matching stops</span>
+              <strong id="stops-matched-value" class="ledger-value">0</strong>
+            </div>
+          </div>
+
+          <p id="active-constraints-summary" class="constraints-summary tabular">
+            Run a search to map 500 m housing-search zones across Singapore.
+          </p>
+        </section>
+
+        <section class="panel-section stops-section" id="section-stops" aria-labelledby="heading-stops">
+          <div class="section-head">
+            <h2 id="heading-stops">Qualifying stops</h2>
+            <span id="visible-stops-count" class="meta-pill tabular">0 shown</span>
+          </div>
+
+          <div class="filter-bar">
+            <fieldset class="filter-chips">
+              <legend class="sr-only">Filter stops by mode</legend>
+              <button type="button" class="chip-btn is-active" data-kind-filter="all">All</button>
+              <button type="button" class="chip-btn" data-kind-filter="rail">MRT / LRT</button>
+              <button type="button" class="chip-btn" data-kind-filter="bus">Bus</button>
+            </fieldset>
+            <label class="sr-only" for="stop-list-filter">Filter qualifying stops</label>
+            <input
+              id="stop-list-filter"
+              type="search"
+              placeholder="Filter by ID, stop name, or service…"
+            />
+          </div>
+
+          <ul id="qualifying-stops-list" class="stops-list" aria-label="Qualifying stops"></ul>
+        </section>
+      </aside>
+
+      <section class="map-stage" aria-label="Housing-search zone map">
+        <div id="map" class="map-canvas"></div>
+
+        <aside class="map-legend" aria-label="Map legend">
+          <div class="legend-row">
+            <span class="legend-swatch legend-swatch--zone" aria-hidden="true"></span>
+            <strong class="legend-title">Within 500 m of a qualifying stop.</strong>
+          </div>
+          <div class="legend-row">
+            <span class="legend-swatch legend-swatch--workplace" aria-hidden="true"></span>
+            <span>Workplace</span>
+          </div>
+          <p class="legend-note">
+            Straight-line proximity, not a walking route. Unshaded areas are not proven unreachable.
+          </p>
+        </aside>
+
+        <section
+          id="selected-stop-card"
+          class="journey-card"
+          aria-labelledby="selected-stop-name"
+          hidden
+        >
+          <div class="journey-card-head">
+            <div class="journey-title-group">
+              <span id="selected-stop-id" class="stop-plaque tabular"></span>
+              <div>
+                <h2 id="selected-stop-name" class="journey-stop-name">Selected stop</h2>
+                <p id="selected-stop-kind" class="journey-stop-kind"></p>
+              </div>
+            </div>
+            <button
+              id="close-journey-card"
+              type="button"
+              class="btn btn--ghost btn--compact"
+              aria-label="Close journey details"
+            >
+              Close
+            </button>
+          </div>
+
+          <dl class="journey-metrics tabular">
+            <div>
+              <dt>Boarding</dt>
+              <dd id="selected-boarding-time">None</dd>
+            </div>
+            <div>
+              <dt>Arrival</dt>
+              <dd id="selected-arrival-time">None</dd>
+            </div>
+            <div>
+              <dt>In vehicle</dt>
+              <dd id="selected-ride-duration">None</dd>
+            </div>
+          </dl>
+
+          <p class="journey-services-row">
+            <span class="journey-services-label">Services</span>
+            <strong id="selected-services">None</strong>
+          </p>
+
+          <p id="selected-journey-disclaimer" class="journey-disclaimer"></p>
+        </section>
+      </section>
+    </main>
+
+    <nav class="mobile-tabs" aria-label="Mobile workspace view">
+      <button type="button" class="mobile-tab-btn" data-mobile-tab="search">Search</button>
+      <button type="button" class="mobile-tab-btn" data-mobile-tab="map">Map</button>
+      <button type="button" class="mobile-tab-btn" data-mobile-tab="stops">
+        Stops (<span id="mobile-stops-count" class="tabular">0</span>)
+      </button>
+    </nav>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

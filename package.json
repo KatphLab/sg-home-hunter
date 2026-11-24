@@ -9,9 +9,12 @@
   },
   "packageManager": "bun@1.4.4",
   "scripts": {
-    "dev": "bun --watch src/index.ts",
-    "build": "bun run typecheck && bun build --target=bun --outdir=dist src/index.ts",
+    "dev": "bun run build:pwa && bun --watch src/index.ts",
+    "build:pwa": "bun scripts/build-pwa.ts",
+    "build": "bun run typecheck && bun run build:pwa && bun build --target=bun --outdir=dist src/index.ts",
     "start": "bun dist/index.js",
+    "test:e2e": "bun run build && bunx --no-install playwright test",
+    "inventory:refresh": "bun scripts/refresh-inventory.ts",
     "lint": "biome check --error-on-warnings .",
     "fix": "biome check --write --error-on-warnings . && bun run knip:fix",
     "typecheck": "tsc --noEmit",
@@ -29,8 +32,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.4",
+    "@playwright/test": "^1.65.1",
     "@swc/core": "^1.16.21",
     "@types/bun": "^1.4.4",
+    "@types/leaflet": "^1.9.22",
     "@types/node": "^26.6.6",
     "danger": "^14.1.0",
     "dependency-cruiser": "^18.7.1",
@@ -40,5 +45,8 @@
     "lint-staged": "^17.6.0",
     "typescript": "^7.0.2"
   },
-  "trustedDependencies": []
+  "trustedDependencies": [],
+  "dependencies": {
+    "leaflet": "^1.9.4"
+  }
 }

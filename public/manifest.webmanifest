@@ -1,0 +1,18 @@
+{
+  "name": "House Hunter",
+  "short_name": "House Hunter",
+  "description": "Find Singapore neighbourhoods within 500 m of public transit stops with a qualifying commute.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "theme_color": "#1B5E4B",
+  "background_color": "#F6F7F5",
+  "icons": [
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

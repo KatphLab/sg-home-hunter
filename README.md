@@ -1,68 +1,49 @@
 # House Hunter
 
-House Hunter is a planned client-only PWA for finding places to live near a qualifying commute in Singapore. See the [PWA product spec](.scratch/commute-zones/spec.md) for the search rules, map and offline experience. The current entrypoint is still the Bun example from [KatphLab/ts-bun-template](https://github.com/KatphLab/ts-bun-template).
+House Hunter is an installable, client-only PWA for finding Singapore neighbourhoods within 500 m straight-line distance of public transit stops that offer a qualifying commute to a workplace. See [spec.md](.scratch/commute-zones/spec.md) for product requirements, [GLOSSARY.md](GLOSSARY.md) for domain terms, [PRODUCT.md](PRODUCT.md) for durable product context, and [DESIGN.md](DESIGN.md) for the HDB Town Precinct Directory design system.
+
+## Features
+
+- **Direct OneMap browser sign-in:** Connects with your own OneMap email and password directly from the browser (no backend proxy or shared token; passwords are never stored or logged).
+- **Workplace & search rules:** Supports 6-digit Singapore postal codes (preserving leading zeros) or exact line-specific MRT/LRT stations, defaults the search date to the next non-holiday Singapore workday (including observed Sunday-to-Monday public holidays), enforces an inclusive 15-minute arrival window (`[officeStart - 15m, officeStart]`), and separates in-vehicle ride time from walking and transfers.
+- **Progressive breadth-first discovery:** Checks every candidate stop in the bundled dated inventory (`public/data/stops.tsv`) on pass 1 before revisiting unmatched stops, streaming 500 m union patches live onto a Leaflet map and an accessible synced stop list.
+- **Offline viewing:** Service Worker (`src/sw.ts`) caches the PWA shell and bundled inventory, while `localStorage` retains only the last **completed** search (workplace, 500 m zone over an offline Singapore coastline layer, stop/journey details, original date, start time, and ride cap) without requiring sign-in or overwriting when a later search stops early.
 
 ## Getting started
 
-Requires Bun 1.4.4 or newer and Node.js 26 for the static-analysis tooling. The application and tests run on Bun, using its built-in test runner.
-
-Install dependencies, verify the scaffold, and run the example:
+Requires Bun 1.4.4 or newer and Node.js 24/26 for static-analysis tooling.
 
 ```sh
 bun install
-bun run check
-bun run dev
+bun run build
+bun run start
 ```
+
+Open `http://127.0.0.1:3000/` in a browser (set `PORT=4173` to override). All PWA assets in `dist/public/` use relative `./` paths and can also be deployed directly to static hosting without the Bun server.
 
 ## Commands
 
-| Command                 | Purpose                                                      |
-| ----------------------- | ------------------------------------------------------------ |
-| `bun run dev`           | Run the TypeScript entrypoint with Bun's watcher             |
-| `bun run build`         | Typecheck and bundle for Bun into `dist/`                    |
-| `bun run start`         | Run the built application with Bun                           |
-| `bun run lint`          | Biome formatting, linting, and import checks; warnings fail  |
-| `bun run fix`           | Apply Biome fixes, then Knip fixes                           |
-| `bun run typecheck`     | Strict TypeScript checking without emitting files            |
-| `bun run test`          | Run Bun's built-in test runner                               |
-| `bun run test:watch`    | Watch tests with Bun                                         |
-| `bun run test:ci`       | Run Bun tests with line and function coverage gates          |
-| `bun run test:coverage` | Run tests and generate text/LCOV coverage                    |
-| `bun run depcruise`     | Enforce dependency and architecture boundaries               |
-| `bun run knip`          | Detect unused files, exports, and dependencies               |
-| `bun run dupcheck`      | Reject duplication above 1%                                  |
-| `bun run check`         | Run all six local quality gates                              |
-| `bun run danger:ci`     | Enforce PR size and generated-artifact policies in GitHub CI |
+| Command                     | Purpose                                                                                       |
+| --------------------------- | --------------------------------------------------------------------------------------------- |
+| `bun run dev`               | Build PWA assets and run the static server with Bun's watcher                                 |
+| `bun run build:pwa`         | Bundle browser TypeScript/Service Worker and copy `public/` + `leaflet.css` to `dist/public/` |
+| `bun run build`             | Typecheck, build PWA assets, and bundle the Bun static server into `dist/`                    |
+| `bun run start`             | Serve `dist/public/` via `dist/index.js`                                                      |
+| `bun run inventory:refresh` | Refresh `public/data/stops.tsv` from BusRouter SG and SGRailData                              |
+| `bun run lint`              | Biome formatting, linting, accessibility, and import checks; warnings fail                    |
+| `bun run fix`               | Apply Biome fixes, then Knip fixes                                                            |
+| `bun run typecheck`         | Strict TypeScript checking without emitting files                                             |
+| `bun run test`              | Run Bun's built-in unit test runner                                                           |
+| `bun run test:ci`           | Run Bun unit tests with 90% line and function coverage gates                                  |
+| `bun run test:e2e`          | Build and run Playwright Chromium browser acceptance tests (`e2e/`)                           |
+| `bun run depcruise`         | Enforce dependency and architecture boundaries                                                |
+| `bun run knip`              | Detect unused files, exports, and dependencies                                                |
+| `bun run dupcheck`          | Reject duplication above 1%                                                                   |
+| `bun run check`             | Run all six local quality gates                                                               |
+| `bun run danger:ci`         | Enforce PR size and generated-artifact policies in GitHub CI                                  |
 
-## Strict checks
+## Runtime dependencies
 
-The PNPM template's TypeScript strictness, Biome rules and test exceptions, dependency-cruiser rules, Knip checks, duplication threshold, Semgrep rules, and Danger policies are retained.
-
-- TypeScript enables strict checking, exact optional properties, unchecked indexed-access checks, unused-local/parameter checks, exhaustive returns, and switch fallthrough restrictions.
-- Biome enforces cognitive complexity 12, function length 80, at most seven parameters, promise/type-safety rules, restricted console calls and parent-relative imports, formatting, and organized imports.
-- Bun's built-in test runner requires **90% line and function coverage** and fails when no tests are found. Statement and branch coverage thresholds are intentionally omitted. Biome rejects focused/skipped tests, and Semgrep rejects todo tests in CI.
-- Dependency-cruiser rejects cycles, undeclared/unresolved dependencies, imports of tests, and production runtime imports of dev dependencies. SWC parses TypeScript source.
-- Semgrep scans OWASP Top 10, Node.js, TypeScript, secrets, and the inherited custom rules. It runs separately from `bun run check`:
-
-  ```sh
-  semgrep scan --error --config p/owasp-top-ten --config p/nodejs --config p/typescript --config p/secrets --config .semgrep.yml .
-  ```
-
-Biome and the custom Semgrep rules retain the source template's limits: they do not provide full unsafe-any flow, unbound-method, cyclomatic-complexity, or specialist ReDoS analysis. Some Semgrep checks are textual and can match code-like strings/comments.
-
-Dependencies use current stable releases and `bun.lock` pins the resolved graph. `trustedDependencies: []` denies dependency lifecycle scripts, including Bun's built-in trusted list, preserving the source template's install-script restrictions. Root-project Husky setup still runs.
-
-Update packages with:
-
-```sh
-bun update --latest
-bun run check
-```
-
-## Git hooks and CI
-
-Husky runs lint-staged on commit and typechecking plus tests on push. GitHub pull requests run the six local gates, Semgrep with blocking findings, and Danger. Pushes to `main` run the full gate, build, and publish the Bun container to GHCR.
-
-The Docker runtime runs as the unprivileged `bun` user and contains only the application bundle and package metadata, not development dependencies.
+- [`leaflet`](https://leafletjs.com/) (`BSD-2-Clause`): Interactive map rendering, uniform-opacity SVG pane for 500 m catchment unions, offline GeoJSON coastline layer, and OneMap tile integration.
 
 See [AGENTS.md](AGENTS.md) for contributor instructions.
