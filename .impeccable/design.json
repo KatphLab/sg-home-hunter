@@ -82,11 +82,6 @@
         "name": "overlay-journey",
         "value": "0 8px 22px rgba(26, 34, 32, 0.2)",
         "purpose": "Selected stop journey detail card."
-      },
-      {
-        "name": "marker-plaque",
-        "value": "0 1px 3px rgba(26, 34, 32, 0.35)",
-        "purpose": "Lifting stop-ID plaques off the map canvas."
       }
     ],
     "motion": [

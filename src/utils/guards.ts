@@ -1,3 +1,15 @@
+import type { TransitMode } from '@lib/commute-types.js'
+
+const TRANSIT_MODES: ReadonlySet<string> = new Set([
+  'BUS',
+  'SUBWAY',
+  'TRAM',
+  'RAIL',
+])
+
+export const isTransitMode = (value: unknown): value is TransitMode =>
+  typeof value === 'string' && TRANSIT_MODES.has(value)
+
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 

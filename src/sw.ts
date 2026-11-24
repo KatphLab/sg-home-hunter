@@ -8,6 +8,8 @@ const PRECACHE_PATHS = [
   './manifest.webmanifest',
   './data/stops.tsv',
   './icons/icon.svg',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
 ]
 
 interface ExtendableEventLike extends Event {

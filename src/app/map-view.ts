@@ -11,7 +11,7 @@ const ZONE_RADIUS_METERS = 500
 const ONEMAP_TILE_URL =
   'https://www.onemap.gov.sg/maps/tiles/Default/{z}/{x}/{y}.png'
 
-const buildMutableOutline = (): GeoJSON.FeatureCollection => ({
+const cloneOutlineForLeaflet = (): GeoJSON.FeatureCollection => ({
   type: 'FeatureCollection',
   features: SINGAPORE_OUTLINE_GEOJSON.features.map((feature) => ({
     type: 'Feature',
@@ -86,7 +86,7 @@ export class CommuteMapView {
     const offlinePane = this.map.createPane('offlineBasePane')
     offlinePane.style.zIndex = '190'
 
-    L.geoJSON(buildMutableOutline(), {
+    L.geoJSON(cloneOutlineForLeaflet(), {
       pane: 'offlineBasePane',
       style: {
         fillColor: '#f6f7f5',

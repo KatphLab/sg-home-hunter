@@ -14,18 +14,10 @@ import {
   isFiniteNonNegativeNumber,
   isNonEmptyString,
   isRecord,
+  isTransitMode,
 } from '@utils/guards.js'
 
 const ARRIVAL_WINDOW_EARLY_MS = 900_000
-const TRANSIT_MODES: ReadonlySet<string> = new Set([
-  'BUS',
-  'SUBWAY',
-  'TRAM',
-  'RAIL',
-])
-
-const isTransitMode = (mode: string): mode is TransitMode =>
-  TRANSIT_MODES.has(mode)
 
 const readOptionalBoolean = (
   record: Record<string, unknown>,
@@ -66,7 +58,9 @@ const extractBoardingStopId = (leg: Record<string, unknown>): string => {
     if (typeof rawCode !== 'string') {
       throw new Error('Malformed transit leg stopCode: expected string')
     }
-    return rawCode
+    if (rawCode.length > 0) {
+      return rawCode
+    }
   }
   const rawStopId = from['stopId']
   if (typeof rawStopId === 'string' && rawStopId.length > 0) {

@@ -14,6 +14,7 @@ import {
 import type { StopListKindFilter } from '@lib/journey-format.js'
 import {
   fetchTransitPlan,
+  OneMapAuthError,
   resolvePostalWorkplace,
   signInToOneMap,
 } from '@lib/onemap-client.js'
@@ -82,6 +83,21 @@ const updateAccountUi = (els: AppElements, state: AppState): void => {
   updateConnectivityUi(els, state)
 }
 
+const refreshStopList = (
+  els: AppElements,
+  mapView: CommuteMapView,
+  state: AppState,
+): void => {
+  renderQualifyingStopsList(
+    els,
+    state.matches,
+    state.kindFilter,
+    state.textFilter,
+    state.selectedStopId,
+    (id) => selectStop(els, mapView, state, id),
+  )
+}
+
 const selectStop = (
   els: AppElements,
   mapView: CommuteMapView,
@@ -95,14 +111,7 @@ const selectStop = (
       ? (state.matches.find((entry) => entry.stop.id === stopId) ?? null)
       : null
   renderSelectedStopCard(els, selected)
-  renderQualifyingStopsList(
-    els,
-    state.matches,
-    state.kindFilter,
-    state.textFilter,
-    state.selectedStopId,
-    (id) => selectStop(els, mapView, state, id),
-  )
+  refreshStopList(els, mapView, state)
 }
 
 const applySnapshot = (
@@ -190,14 +199,7 @@ const applyProgress = (
     progress.matchedCount.toLocaleString('en-SG')
   els.liveStatusRegion.textContent = `Pass ${String(progress.passNumber)} of ${String(progress.totalPasses)}: ${String(progress.triedCount)} of ${String(progress.totalCount)} stops tried, ${String(progress.matchedCount)} matching.`
 
-  renderQualifyingStopsList(
-    els,
-    state.matches,
-    state.kindFilter,
-    state.textFilter,
-    state.selectedStopId,
-    (id) => selectStop(els, mapView, state, id),
-  )
+  refreshStopList(els, mapView, state)
 }
 
 const handleSignIn = async (
@@ -314,6 +316,13 @@ const handleSearchSubmit = async (
       state.account,
     )
   } catch (error) {
+    if (error instanceof OneMapAuthError) {
+      state.account = null
+      updateAccountUi(els, state)
+      els.authError.textContent = error.message
+      els.authError.hidden = false
+      return
+    }
     els.searchError.textContent = normalizeError(
       error,
       'Unable to resolve workplace.',
@@ -403,27 +412,13 @@ const wireFiltersAndTabs = (
       for (const peer of chipButtons) {
         peer.classList.toggle('is-active', peer === btn)
       }
-      renderQualifyingStopsList(
-        els,
-        state.matches,
-        state.kindFilter,
-        state.textFilter,
-        state.selectedStopId,
-        (id) => selectStop(els, mapView, state, id),
-      )
+      refreshStopList(els, mapView, state)
     })
   }
 
   els.stopListFilterInput.addEventListener('input', () => {
     state.textFilter = els.stopListFilterInput.value
-    renderQualifyingStopsList(
-      els,
-      state.matches,
-      state.kindFilter,
-      state.textFilter,
-      state.selectedStopId,
-      (id) => selectStop(els, mapView, state, id),
-    )
+    refreshStopList(els, mapView, state)
   })
 
   const mobileTabs =

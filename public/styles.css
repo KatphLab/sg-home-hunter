@@ -6,7 +6,7 @@
   --ink-secondary: #434f4b;
   --border-rule: #cfd5d0;
   --accent-botanical: #1b5e4b;
-  --accent-botanical-hover: #144739;
+  --accent-botanical-hover: #134436;
   --accent-botanical-tint: #e3efe9;
   --accent-vermilion: #c83e2b;
   --accent-vermilion-tint: #fbeae7;
@@ -665,7 +665,6 @@ select {
   font-size: 0.7rem;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(26, 34, 32, 0.35);
   transition:
     transform 150ms ease,
     opacity 150ms ease;
@@ -697,7 +696,6 @@ select {
   border: 2px solid var(--surface-white);
   font-weight: 800;
   font-size: 0.75rem;
-  box-shadow: 0 2px 5px rgba(26, 34, 32, 0.38);
 }
 
 .map-legend {

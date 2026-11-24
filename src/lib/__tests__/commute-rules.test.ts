@@ -274,6 +274,23 @@ describe('itinerary qualification rules', () => {
     expect(matched?.services).toEqual([
       { id: 'NS', name: 'North South Line', mode: 'SUBWAY' },
     ])
+
+    const emptyStopCodeFallback = {
+      ...viaStopIdSuffix,
+      legs: [
+        {
+          mode: 'SUBWAY',
+          startTime: sgtMs('08:30:00'),
+          endTime: sgtMs('08:50:00'),
+          from: { stopCode: '', stopId: '1:NS17' },
+          routeLongName: 'North South Line',
+          routeId: 'NS',
+        },
+      ],
+    }
+    expect(
+      evaluateItinerary(STOP_NS17, CONSTRAINTS, emptyStopCodeFallback)?.stopId,
+    ).toBe('NS17')
   })
 
   it('rejects non-transit modes, walkLimitExceeded, and cross-date boarding', () => {

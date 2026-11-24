@@ -117,7 +117,7 @@ interface SearchState {
   authExpired: boolean
 }
 
-const emitSnapshot = (
+const emitProgress = (
   state: SearchState,
   passNumber: number,
   latestMatch: QualifiedStop | null,
@@ -206,12 +206,12 @@ const probeStop = async (
     if (options.signal.aborted) {
       return 'stop'
     }
-    state.triedSet.add(stop.id)
     const itineraries = await options.routeStop(
       stop,
       departureTime,
       options.signal,
     )
+    state.triedSet.add(stop.id)
     const journey = findFirstQualifyingJourney(
       stop,
       options.constraints,
@@ -221,7 +221,7 @@ const probeStop = async (
     if (latestMatch) {
       state.matchedMap.set(stop.id, latestMatch)
     }
-    emitSnapshot(state, passNumber, latestMatch)
+    emitProgress(state, passNumber, latestMatch)
     return 'ok'
   } catch (error) {
     if (error instanceof OneMapAuthError) {
@@ -231,8 +231,9 @@ const probeStop = async (
     if (options.signal.aborted) {
       return 'stop'
     }
+    state.triedSet.add(stop.id)
     state.failedQueries += 1
-    emitSnapshot(state, passNumber, null)
+    emitProgress(state, passNumber, null)
     return 'ok'
   }
 }
@@ -243,7 +244,7 @@ const runSearchPass = async (
   options: RunCommuteSearchOptions,
   state: SearchState,
 ): Promise<'ok' | 'stop'> => {
-  emitSnapshot(state, passNumber, null)
+  emitProgress(state, passNumber, null)
   for (const stop of options.inventory.stops) {
     if (options.signal.aborted) {
       return 'stop'
@@ -289,7 +290,7 @@ export const runCommuteSearch = async (
     options.constraints,
     state,
   )
-  emitSnapshot(state, 1, seeded)
+  emitProgress(state, 1, seeded)
 
   for (let passIdx = 0; passIdx < schedule.length; passIdx += 1) {
     const departureTime = schedule[passIdx] ?? '08:00:00'

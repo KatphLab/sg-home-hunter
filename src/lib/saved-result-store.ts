@@ -6,26 +6,17 @@ import type {
   QualifyingJourney,
   SearchConstraints,
   Stop,
-  TransitMode,
   Workplace,
 } from '@lib/commute-types.js'
 import {
   isFiniteNonNegativeNumber,
   isNonEmptyString,
   isRecord,
+  isTransitMode,
   parseJsonUnknown,
 } from '@utils/guards.js'
 
 const STORAGE_KEY = 'house-hunter:last-completed-result:v1'
-const TRANSIT_MODES: ReadonlySet<string> = new Set([
-  'BUS',
-  'SUBWAY',
-  'TRAM',
-  'RAIL',
-])
-
-const isTransitMode = (value: unknown): value is TransitMode =>
-  typeof value === 'string' && TRANSIT_MODES.has(value)
 
 const parseCoordinates = (raw: unknown): Coordinates | null => {
   if (!isRecord(raw)) {

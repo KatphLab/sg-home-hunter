@@ -1,13 +1,17 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
+import {
+  BUS_ID_PATTERN,
+  isValidSingaporeCoordinate,
+  RAIL_ID_PATTERN,
+} from '@lib/inventory.js'
+import { isRecord } from '@utils/guards.js'
 
 const BUS_STOPS_URL = 'https://data.busrouter.sg/v1/stops.min.json'
 const RAIL_GEOJSON_URL =
   'https://raw.githubusercontent.com/cheeaun/sgraildata/master/data/v1/sg-rail.geojson'
 const DEFAULT_OUTPUT_PATH = resolve(import.meta.dir, '../public/data/stops.tsv')
 
-const BUS_ID_PATTERN = /^[0-9]{5}$/
-const RAIL_ID_PATTERN = /^[A-Z]{1,3}(?:[0-9]{1,2}[A-Z]?)?$/
 const SINGAPORE_OFFSET_MS = 8 * 3_600_000
 
 interface RawStopRecord {
@@ -17,17 +21,6 @@ interface RawStopRecord {
   readonly latitude: number
   readonly longitude: number
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-const isValidSingaporeCoord = (lat: number, lon: number): boolean =>
-  Number.isFinite(lat) &&
-  Number.isFinite(lon) &&
-  lat >= 1.0 &&
-  lat <= 1.6 &&
-  lon >= 103.4 &&
-  lon <= 104.3
 
 const sanitizeName = (raw: string): string =>
   raw.replace(/[\t\r\n]+/g, ' ').trim()
@@ -54,7 +47,7 @@ const parseBusStops = (raw: unknown): RawStopRecord[] => {
       typeof lon !== 'number' ||
       typeof lat !== 'number' ||
       typeof name !== 'string' ||
-      !isValidSingaporeCoord(lat, lon)
+      !isValidSingaporeCoordinate(lat, lon)
     ) {
       continue
     }
@@ -100,7 +93,7 @@ const parseRailFeature = (feature: unknown): RawStopRecord[] => {
   if (
     typeof lon !== 'number' ||
     typeof lat !== 'number' ||
-    !isValidSingaporeCoord(lat, lon)
+    !isValidSingaporeCoordinate(lat, lon)
   ) {
     return []
   }

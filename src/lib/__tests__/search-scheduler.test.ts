@@ -190,5 +190,6 @@ describe('search-scheduler', () => {
     expect(authResult.status).toBe('partial')
     expect(authResult.authExpired).toBe(true)
     expect(authResult.failedQueries).toBe(1)
+    expect(authResult.triedCount).toBe(1)
   })
 })

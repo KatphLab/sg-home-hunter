@@ -21,34 +21,13 @@ const requireElement = (id: string): HTMLElement => {
   return el
 }
 
-const requireInput = (id: string): HTMLInputElement => {
+const requireElementOfType = <T extends HTMLElement>(
+  id: string,
+  ctor: { new (): T },
+): T => {
   const el = requireElement(id)
-  if (!(el instanceof HTMLInputElement)) {
-    throw new Error(`Expected HTMLInputElement for #${id}`)
-  }
-  return el
-}
-
-const requireSelect = (id: string): HTMLSelectElement => {
-  const el = requireElement(id)
-  if (!(el instanceof HTMLSelectElement)) {
-    throw new Error(`Expected HTMLSelectElement for #${id}`)
-  }
-  return el
-}
-
-const requireButton = (id: string): HTMLButtonElement => {
-  const el = requireElement(id)
-  if (!(el instanceof HTMLButtonElement)) {
-    throw new Error(`Expected HTMLButtonElement for #${id}`)
-  }
-  return el
-}
-
-const requireForm = (id: string): HTMLFormElement => {
-  const el = requireElement(id)
-  if (!(el instanceof HTMLFormElement)) {
-    throw new Error(`Expected HTMLFormElement for #${id}`)
+  if (!(el instanceof ctor)) {
+    throw new Error(`Unexpected element type for #${id}`)
   }
   return el
 }
@@ -106,26 +85,35 @@ export const collectAppElements = (): AppElements => ({
   inventoryBadge: requireElement('inventory-badge'),
   offlineBanner: requireElement('offline-banner'),
   accountStatusPill: requireElement('account-status-pill'),
-  signinForm: requireForm('signin-form'),
-  emailInput: requireInput('onemap-email'),
-  passwordInput: requireInput('onemap-password'),
-  signinButton: requireButton('signin-btn'),
+  signinForm: requireElementOfType('signin-form', HTMLFormElement),
+  emailInput: requireElementOfType('onemap-email', HTMLInputElement),
+  passwordInput: requireElementOfType('onemap-password', HTMLInputElement),
+  signinButton: requireElementOfType('signin-btn', HTMLButtonElement),
   signedInBar: requireElement('signed-in-bar'),
   signedInEmail: requireElement('signed-in-email'),
-  signoutButton: requireButton('signout-btn'),
+  signoutButton: requireElementOfType('signout-btn', HTMLButtonElement),
   authError: requireElement('auth-error'),
-  searchForm: requireForm('search-form'),
+  searchForm: requireElementOfType('search-form', HTMLFormElement),
   postalGroup: requireElement('postal-field-group'),
-  postalInput: requireInput('postal-input'),
+  postalInput: requireElementOfType('postal-input', HTMLInputElement),
   stationGroup: requireElement('station-field-group'),
-  stationFilterInput: requireInput('station-filter-input'),
-  stationSelect: requireSelect('station-select'),
-  officeStartInput: requireInput('office-start-input'),
-  rideCapInput: requireInput('ride-cap-input'),
+  stationFilterInput: requireElementOfType(
+    'station-filter-input',
+    HTMLInputElement,
+  ),
+  stationSelect: requireElementOfType('station-select', HTMLSelectElement),
+  officeStartInput: requireElementOfType(
+    'office-start-input',
+    HTMLInputElement,
+  ),
+  rideCapInput: requireElementOfType('ride-cap-input', HTMLInputElement),
   plannedSearchDate: requireElement('planned-search-date'),
   plannedInventoryDate: requireElement('planned-inventory-date'),
-  startSearchButton: requireButton('start-search-btn'),
-  stopSearchButton: requireButton('stop-search-btn'),
+  startSearchButton: requireElementOfType(
+    'start-search-btn',
+    HTMLButtonElement,
+  ),
+  stopSearchButton: requireElementOfType('stop-search-btn', HTMLButtonElement),
   searchError: requireElement('search-error'),
   resultStatusTag: requireElement('result-status-tag'),
   liveStatusRegion: requireElement('live-status-region'),
@@ -133,7 +121,10 @@ export const collectAppElements = (): AppElements => ({
   stopsMatchedValue: requireElement('stops-matched-value'),
   activeConstraintsSummary: requireElement('active-constraints-summary'),
   visibleStopsCount: requireElement('visible-stops-count'),
-  stopListFilterInput: requireInput('stop-list-filter'),
+  stopListFilterInput: requireElementOfType(
+    'stop-list-filter',
+    HTMLInputElement,
+  ),
   qualifyingStopsList: requireElement('qualifying-stops-list'),
   mapContainer: requireElement('map'),
   selectedStopCard: requireElement('selected-stop-card'),
@@ -145,7 +136,10 @@ export const collectAppElements = (): AppElements => ({
   selectedRideDuration: requireElement('selected-ride-duration'),
   selectedServices: requireElement('selected-services'),
   selectedJourneyDisclaimer: requireElement('selected-journey-disclaimer'),
-  closeJourneyCardButton: requireButton('close-journey-card'),
+  closeJourneyCardButton: requireElementOfType(
+    'close-journey-card',
+    HTMLButtonElement,
+  ),
   mobileStopsCount: requireElement('mobile-stops-count'),
 })
 

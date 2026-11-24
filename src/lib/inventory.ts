@@ -1,11 +1,11 @@
 import type { Stop, StopInventory, StopKind } from '@lib/commute-types.js'
 
 const POSTAL_CODE_PATTERN = /^[0-9]{6}$/
-const BUS_ID_PATTERN = /^[0-9]{5}$/
-const RAIL_ID_PATTERN = /^[A-Z]{1,3}(?:[0-9]{1,2}[A-Z]?)?$/
+export const BUS_ID_PATTERN = /^[0-9]{5}$/
+export const RAIL_ID_PATTERN = /^[A-Z]{1,3}(?:[0-9]{1,2}[A-Z]?)?$/
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
-const isValidCoordinate = (lat: number, lon: number): boolean =>
+export const isValidSingaporeCoordinate = (lat: number, lon: number): boolean =>
   Number.isFinite(lat) &&
   Number.isFinite(lon) &&
   lat >= 1.0 &&
@@ -31,7 +31,7 @@ const parseStopRow = (line: string, lineNumber: number): Stop => {
   }
   const latitude = Number(latRaw)
   const longitude = Number(lonRaw)
-  if (!isValidCoordinate(latitude, longitude)) {
+  if (!isValidSingaporeCoordinate(latitude, longitude)) {
     throw new Error(`Invalid coordinates on line ${String(lineNumber)}`)
   }
   return {
