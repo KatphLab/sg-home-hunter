@@ -16,25 +16,25 @@ onemap-commute scan --inventory FILE (--postal-code CODE | --destination-station
     --office-start HH:MM --max-ride-minutes N [scan options] [common options]
 ```
 
-| Option | Meaning and default |
-|---|---|
-| `--output FILE` | Both commands: full inventory or report. Default: JSON to stdout. |
-| `--cache FILE` | Both: SQLite file, default `~/.cache/onemap-commute/responses.sqlite`. |
-| `--credential-dir DIR` | Both: encrypted login location, default `~/.config/onemap`. |
-| `--max-requests N` | Both: positive integer, default 1000 actual HTTP attempts per invocation, including authentication and retries. |
-| `--requests-per-second R` | Both: rate per client, `0 < R <= 5`, default 2. |
-| `--postal-code CODE` | Exactly six ASCII digits, preserved as text. Optional local discovery centre or one of the two scan destinations. |
-| `--radius-m N` | Discovery only: integer 1–5000, default 5000. Validated even on grid discovery, but only changes the radius of local discovery. |
-| `--destination-station ID` | Scan only: exact uppercase rail ID, no case folding, whitespace trimming, composite codes or station-name matching. |
-| `--inventory FILE` | Required for both kinds of scan destination; see inventory contract below. |
-| `--office-start HH:MM` | Required scan deadline in `Asia/Singapore`; clock inputs use zero-padded 24-hour hours and minutes. |
-| `--max-ride-minutes N` | Required positive integer; applies to the sum of transit leg durations. |
-| `--start-date DATE` | First candidate date, ISO date, default today's Singapore date. All selected dates must be in the live planner horizon. |
-| `--earliest-departure HH:MM` | Scan window start, default `06:00`; strictly before the deadline on the same day. |
-| `--departure-step-minutes N` | Integer 1–60, default 10. This is a search resolution, not a travel allowance. |
-| `--origin-ids A,B,...` | Optional exact comma-separated inventory IDs; unknown ID is an error. No normalization. |
-| `--limit-origins N` | Optional positive integer; keep at most the nearest N **after** filtering IDs. |
-| `--ids-output FILE` | Scan only: also write the two ID arrays, even when the final report is partial. |
+| Option                       | Meaning and default                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `--output FILE`              | Both commands: full inventory or report. Default: JSON to stdout.                                                               |
+| `--cache FILE`               | Both: SQLite file, default `~/.cache/onemap-commute/responses.sqlite`.                                                          |
+| `--credential-dir DIR`       | Both: encrypted login location, default `~/.config/onemap`.                                                                     |
+| `--max-requests N`           | Both: positive integer, default 1000 actual HTTP attempts per invocation, including authentication and retries.                 |
+| `--requests-per-second R`    | Both: rate per client, `0 < R <= 5`, default 2.                                                                                 |
+| `--postal-code CODE`         | Exactly six ASCII digits, preserved as text. Optional local discovery centre or one of the two scan destinations.               |
+| `--radius-m N`               | Discovery only: integer 1–5000, default 5000. Validated even on grid discovery, but only changes the radius of local discovery. |
+| `--destination-station ID`   | Scan only: exact uppercase rail ID, no case folding, whitespace trimming, composite codes or station-name matching.             |
+| `--inventory FILE`           | Required for both kinds of scan destination; see inventory contract below.                                                      |
+| `--office-start HH:MM`       | Required scan deadline in `Asia/Singapore`; clock inputs use zero-padded 24-hour hours and minutes.                             |
+| `--max-ride-minutes N`       | Required positive integer; applies to the sum of transit leg durations.                                                         |
+| `--start-date DATE`          | First candidate date, ISO date, default today's Singapore date. All selected dates must be in the live planner horizon.         |
+| `--earliest-departure HH:MM` | Scan window start, default `06:00`; strictly before the deadline on the same day.                                               |
+| `--departure-step-minutes N` | Integer 1–60, default 10. This is a search resolution, not a travel allowance.                                                  |
+| `--origin-ids A,B,...`       | Optional exact comma-separated inventory IDs; unknown ID is an error. No normalization.                                         |
+| `--limit-origins N`          | Optional positive integer; keep at most the nearest N **after** filtering IDs.                                                  |
+| `--ids-output FILE`          | Scan only: also write the two ID arrays, even when the final report is partial.                                                 |
 
 Progress (discovery cell or origin index), warnings, counts and errors go to stderr. File output is indented JSON (two spaces) with a final newline. Create parent directories; write a sibling `<filename>.new` and replace the destination atomically. No additional file format is required.
 
@@ -42,18 +42,18 @@ Progress (discovery cell or origin index), warnings, counts and errors go to std
 
 The checked-in [inventory schema](schemas/inventory.schema.json) and [result schema](schemas/result.schema.json) specify wire field names, types, defaults and bounds. The following record dictionary is sufficient to map them to another language. Arrays are ordered JSON arrays. Records reject unknown fields; use strict field types. Dates are ISO calendar dates; timestamps have an explicit offset. Generated times use Singapore time. `schema_version` defaults to the integer `1` on both root records (it is not an enum check).
 
-| Record | Fields and meaning |
-|---|---|
-| `Point` | WGS84 numbers `latitude` in [1.0, 1.6], `longitude` in [103.4, 104.3]. |
-| `Stop` | `id` string, `kind` (`bus` or `rail`), `name` string, `point`, `source_id` nullable string (default null; set by discovery for expanded interchanges). |
-| `Inventory` | `schema_version`, `scope` string, `fetched_at` timestamp, `stops: Stop[]`, `discovery_errors: string[]` (default empty). Reject duplicate `(kind,id)` pairs on input. |
-| `Service` | `id`, `name`, `mode`, all strings; preserve provider values and transit-leg order. |
-| `Journey` | `origin_id`, `service_date`, `boarding_at`, `arrival_at`; nonnegative integer `ride_seconds`, `elapsed_seconds`, `walking_seconds`, `waiting_seconds`, `early_arrival_seconds` (0–900); `services: Service[]`, `query_time` (`HH:MM:SS`), `query_mode`. See §6 for the clocks behind these fields. |
-| `DayResult` | `service_date`, `status`, `journeys: Journey[]`, `query_errors: string[]` (default empty). |
-| `OriginResult` | `stop: Stop`, `status`, `days: DayResult[]` in attempt order. An early stop yields a prefix, not five fabricated negative days. |
-| `Coverage` | `exhaustive`, `scan_completed`, `origin_scope_limited` booleans; `inventory_scope`, `earliest_departure` strings; integer `inventory_count`, `selected_count`, `processed_count`, `unprocessed_count`, `api_requests`, `cache_hits`, `departure_step_minutes`; `limitations: string[]`. |
-| `Report` | `schema_version`, `generated_at`, `office_postal_code`, `destination_station_id`, `office: Point`, `office_address`, `office_start`, `max_in_vehicle_minutes`, `early_arrival_minutes` (15), `service_dates`, `bus_stop_ids`, `mrt_lrt_ids`, `origins: OriginResult[]`, `coverage: Coverage`. |
-| IDs-only projection | Object containing only `bus_stop_ids` and `mrt_lrt_ids`, copied from the final report. Both are arrays of strings, including when empty. |
+| Record              | Fields and meaning                                                                                                                                                                                                                                                                                 |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Point`             | WGS84 numbers `latitude` in [1.0, 1.6], `longitude` in [103.4, 104.3].                                                                                                                                                                                                                             |
+| `Stop`              | `id` string, `kind` (`bus` or `rail`), `name` string, `point`, `source_id` nullable string (default null; set by discovery for expanded interchanges).                                                                                                                                             |
+| `Inventory`         | `schema_version`, `scope` string, `fetched_at` timestamp, `stops: Stop[]`, `discovery_errors: string[]` (default empty). Reject duplicate `(kind,id)` pairs on input.                                                                                                                              |
+| `Service`           | `id`, `name`, `mode`, all strings; preserve provider values and transit-leg order.                                                                                                                                                                                                                 |
+| `Journey`           | `origin_id`, `service_date`, `boarding_at`, `arrival_at`; nonnegative integer `ride_seconds`, `elapsed_seconds`, `walking_seconds`, `waiting_seconds`, `early_arrival_seconds` (0–900); `services: Service[]`, `query_time` (`HH:MM:SS`), `query_mode`. See §6 for the clocks behind these fields. |
+| `DayResult`         | `service_date`, `status`, `journeys: Journey[]`, `query_errors: string[]` (default empty).                                                                                                                                                                                                         |
+| `OriginResult`      | `stop: Stop`, `status`, `days: DayResult[]` in attempt order. An early stop yields a prefix, not five fabricated negative days.                                                                                                                                                                    |
+| `Coverage`          | `exhaustive`, `scan_completed`, `origin_scope_limited` booleans; `inventory_scope`, `earliest_departure` strings; integer `inventory_count`, `selected_count`, `processed_count`, `unprocessed_count`, `api_requests`, `cache_hits`, `departure_step_minutes`; `limitations: string[]`.            |
+| `Report`            | `schema_version`, `generated_at`, `office_postal_code`, `destination_station_id`, `office: Point`, `office_address`, `office_start`, `max_in_vehicle_minutes`, `early_arrival_minutes` (15), `service_dates`, `bus_stop_ids`, `mrt_lrt_ids`, `origins: OriginResult[]`, `coverage: Coverage`.      |
+| IDs-only projection | Object containing only `bus_stop_ids` and `mrt_lrt_ids`, copied from the final report. Both are arrays of strings, including when empty.                                                                                                                                                           |
 
 Enforce these constraints in code, not just via JSON Schema: exactly one destination identity is non-null (either field defaults to null if absent); a bus ID full-matches `[0-9]{5}`, and a rail ID full-matches `[A-Z]{1,3}(?:[0-9]{1,2}[A-Z]?)?`; stop ID and kind must agree. Use the target language's **whole-string** match, not a substring match or a literal copy of the schemas' regex-engine-specific `\A` and `\z` anchors. Keep leading zeros, letter-only rail codes and station suffixes. Neither proximity nor a shared interchange name makes IDs equivalent.
 
@@ -73,11 +73,11 @@ REST root: `https://www.onemap.gov.sg`. MCP endpoint: `https://public-onemap-gat
 
 ### Request/response mapping
 
-| Operation | Wire contract |
-|---|---|
-| Postal | GET `/api/common/elastic/search` with `searchVal=CODE`, `returnGeom=Y`, `getAddrDetails=Y`, `pageNum=1`. Filter `results` to `POSTAL == CODE`; no exact result is an error. Use **first** exact row's numeric `LATITUDE`, `LONGITUDE` and `ADDRESS`, in provider order. Count exact rows on that page; a scan warns if more than one. |
-| Nearby | POST to MCP with `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":TOOL,"arguments":{"latitude":LAT_TEXT,"longitude":LON_TEXT,"radius_in_meters":N}}}`. `TOOL` is `nearby___bus_stops` or `nearby___mrt_stations`. Reject `result.isError` if true. Join the `text` fields of `result.content` entries of type `text` with newlines; parse that string as a JSON array. |
-| Routing | GET `/api/public/routingsvc/route`, query parameters in order: `start=lat,lon`, `end=lat,lon`, `routeType=pt`, `mode=bus\|rail\|transit` (one value), `date=MM-DD-YYYY`, `time=HH:MM:SS`, `numItineraries=3`. URL-encode the query. Times are **departure** probes; no `arriveBy`. Require `plan` object with `itineraries` array, possibly empty. |
+| Operation | Wire contract                                                                                                                                                                                                                                                                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Postal    | GET `/api/common/elastic/search` with `searchVal=CODE`, `returnGeom=Y`, `getAddrDetails=Y`, `pageNum=1`. Filter `results` to `POSTAL == CODE`; no exact result is an error. Use **first** exact row's numeric `LATITUDE`, `LONGITUDE` and `ADDRESS`, in provider order. Count exact rows on that page; a scan warns if more than one.                                                 |
+| Nearby    | POST to MCP with `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":TOOL,"arguments":{"latitude":LAT_TEXT,"longitude":LON_TEXT,"radius_in_meters":N}}}`. `TOOL` is `nearby___bus_stops` or `nearby___mrt_stations`. Reject `result.isError` if true. Join the `text` fields of `result.content` entries of type `text` with newlines; parse that string as a JSON array. |
+| Routing   | GET `/api/public/routingsvc/route`, query parameters in order: `start=lat,lon`, `end=lat,lon`, `routeType=pt`, `mode=bus\|rail\|transit` (one value), `date=MM-DD-YYYY`, `time=HH:MM:SS`, `numItineraries=3`. URL-encode the query. Times are **departure** probes; no `arriveBy`. Require `plan` object with `itineraries` array, possibly empty.                                    |
 
 Only for a routing 404, inspect up to 8192 bytes of JSON error body. Read `error`, or `message` if `error` is absent. Exactly `No route found between the specified locations` or `No bus route found between the specified locations` becomes the successful, cacheable `{"plan":{"itineraries":[]}}`. All other 404s, including `Unable to get MRT route`, are failures, not negative timetable evidence.
 
@@ -96,11 +96,11 @@ latitudes:   1.16  1.22  1.28  1.34  1.40  1.46  1.48
 longitudes: 103.60 103.66 103.72 103.78 103.84 103.90 103.96 104.02 104.08 104.12
 ```
 
-For each cell request bus, then rail. Map row `id`, `name`, `lat`, `lon` to `Stop`; convert coordinates to numbers. Only at this provider boundary, convert a JSON integer bus ID in [0,99999] to a zero-padded five-digit string; do **not** repair malformed strings, floats or booleans. For rail, accept a provider composite only if it consists entirely of valid codes separated by literal ` / `; emit one stop per code with identical name/point and the exact composite as `source_id`. Ordinary stops have null `source_id`. If validation fails, record the one-based cell, row, kind and error type, omit that row and keep its siblings. On cell/kind query failure record cell, kind and error type and continue. On budget exhaustion record its location and return the partial inventory immediately. Across cells, last valid row wins by `(kind,id)`; sort output by `(kind,id)` lexically. Stamp `fetched_at` when returning. A grid inventory is not an official census.
+For each cell request bus, then rail. Map row `id`, `name`, `lat`, `lon` to `Stop`; convert coordinates to numbers. Only at this provider boundary, convert a JSON integer bus ID in [0,99999] to a zero-padded five-digit string; do **not** repair malformed strings, floats or booleans. For rail, accept a provider composite only if it consists entirely of valid codes separated by literal `/`; emit one stop per code with identical name/point and the exact composite as `source_id`. Ordinary stops have null `source_id`. If validation fails, record the one-based cell, row, kind and error type, omit that row and keep its siblings. On cell/kind query failure record cell, kind and error type and continue. On budget exhaustion record its location and return the partial inventory immediately. Across cells, last valid row wins by `(kind,id)`; sort output by `(kind,id)` lexically. Stamp `fetched_at` when returning. A grid inventory is not an official census.
 
 **Destination.** Load and validate the entire scan inventory first. A station must match exactly one `rail` stop by ID, before any origin filtering. Use its point and name for `office` and `office_address`; no postal lookup, name search, nearest station or building fallback. For an invalid inventory or missing station give an actionable safe destination error. In postal mode use the exact lookup above; do not equate a coincident stop with the office.
 
-**Dates.** Starting at `start-date` (inclusive), inspect offsets 0 through 31; keep the first non-holiday occurrence of each weekday Monday–Friday. Use the Singapore public-holiday calendar **including observed holidays**, for the start year and next year (reference lock: `holidays` 0.109). Return the five dates in chronological order, not weekday-number order; fail if not found. A holiday Monday defers *Monday*; a second Tuesday cannot replace it. At scan time reject if any selected date falls outside `[Singapore today, today + 30 days]` inclusive.
+**Dates.** Starting at `start-date` (inclusive), inspect offsets 0 through 31; keep the first non-holiday occurrence of each weekday Monday–Friday. Use the Singapore public-holiday calendar **including observed holidays**, for the start year and next year (reference lock: `holidays` 0.109). Return the five dates in chronological order, not weekday-number order; fail if not found. A holiday Monday defers _Monday_; a second Tuesday cannot replace it. At scan time reject if any selected date falls outside `[Singapore today, today + 30 days]` inclusive.
 
 **Origin selection.** Filter by exact requested IDs, if supplied. Sort by `(great-circle distance to office, kind, id)` ascending, using haversine distance with Earth radius 6,371,000 m and angles in radians. Apply the optional nearest-N limit, then reject an empty selection. The user's ID list order does not determine processing order.
 
@@ -152,10 +152,10 @@ for stop in selected origins (nearest first):
 
 The first date is searched across **all** sampled pairs even after a positive result, budget permitting. Later dates probe the **previous successful day's** pairs first and may qualify via a different service. Ordinary query errors include date, departure, mode and error type, not upstream text. They do not interrupt other probes. Never infer other origins from a returned route.
 
-| Level | Decision, in precedence order |
-|---|---|
-| Day | Any retained journey → `qualified` (keep any errors too). Else any error or exhausted budget → `incomplete`. Else → `not_established`. |
-| Origin | Five qualified days → `qualified`. Else exhaustion or any incomplete day → `incomplete`. Else → `not_established`. Stop on a day without evidence: that origin can no longer meet the five-day requirement. |
+| Level      | Decision, in precedence order                                                                                                                                                                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Day        | Any retained journey → `qualified` (keep any errors too). Else any error or exhausted budget → `incomplete`. Else → `not_established`.                                                                                                                                 |
+| Origin     | Five qualified days → `qualified`. Else exhaustion or any incomplete day → `incomplete`. Else → `not_established`. Stop on a day without evidence: that origin can no longer meet the five-day requirement.                                                            |
 | Whole scan | `scan_completed=true` only if every selected origin has been processed, no budget exhaustion was recorded, no origin is incomplete and **no attempted day has query errors**. A clean `not_established` result does not prevent completion. `exhaustive=false` always. |
 
 **Identity case:** if the selected origin is the exact destination station ID, make no route requests for it. Emit one journey per date: both instants at that day's office deadline; all five duration metrics zero; empty service list; `query_time` = deadline with seconds; `query_mode="at_destination"`. This is explicit identity evidence, not a fabricated API response. Other line IDs at the same point do not qualify by identity.
@@ -168,26 +168,26 @@ Copy the inventory scope and sampling parameters into coverage. Record cumulativ
 
 Write the full report after each processed origin **only when** `--output` is set. Always emit the final report once at the end, then write the optional IDs file. `generated_at` is the report construction time. Coverage may be partial even when an ID is valid: do not erase five-day positive evidence because a different probe failed.
 
-| Exit | Meaning |
-|---|---|
-| `0` | Discovery recorded no errors, or the selected sampled scan completed cleanly. Not an exhaustiveness claim. |
-| `2` | Usage/configuration or unrecoverable top-level failure (e.g. bad inventory, unresolved destination, authentication/budget failure during postal lookup, file error). Emit a safe diagnostic. |
-| `3` | Discovery wrote an inventory with errors, or scan wrote a report with `scan_completed=false`. Auth/provider errors inside cell or route loops are recorded there rather than automatically treated as top-level failures. |
+| Exit | Meaning                                                                                                                                                                                                                   |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Discovery recorded no errors, or the selected sampled scan completed cleanly. Not an exhaustiveness claim.                                                                                                                |
+| `2`  | Usage/configuration or unrecoverable top-level failure (e.g. bad inventory, unresolved destination, authentication/budget failure during postal lookup, file error). Emit a safe diagnostic.                              |
+| `3`  | Discovery wrote an inventory with errors, or scan wrote a report with `scan_completed=false`. Auth/provider errors inside cell or route loops are recorded there rather than automatically treated as top-level failures. |
 
 ## 9. Proving a port offline
 
 Implement in dependency order: contracts and pure date/time rules; itinerary evaluation; scheduler over an injected route operation; OneMap adapter/cache; finally discovery, CLI and output. This keeps the hard decisions testable without credentials. The following are parity checks, not instructions to query live historical dates.
 
-| Input or scenario | Expected observation |
-|---|---|
-| Provider integer bus ID `123` vs string `"123"`; rail `NE1 / CC29` | `"00123"` for the integer, row error for the string; two rail stops each retaining `source_id="NE1 / CC29"`. One bad row does not discard the next. |
-| Date selection starting 2026-12-31 | `2026-12-31, 2027-01-04, 2027-01-05, 2027-01-06, 2027-01-08`: New Year's Day defers Friday. Test the calendar without the live CLI horizon. |
+| Input or scenario                                                                                                 | Expected observation                                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider integer bus ID `123` vs string `"123"`; rail `NE1 / CC29`                                                | `"00123"` for the integer, row error for the string; two rail stops each retaining `source_id="NE1 / CC29"`. One bad row does not discard the next.                                                   |
+| Date selection starting 2026-12-31                                                                                | `2026-12-31, 2027-01-04, 2027-01-05, 2027-01-06, 2027-01-08`: New Year's Day defers Friday. Test the calendar without the live CLI horizon.                                                           |
 | [Captured bus→MRT response](tests/fixtures/bus_mrt_coast.json), use its origin/date/query, deadline 09:00, cap 30 | Retain bus `66421` → service `116` → `NE` (`BUS`, `SUBWAY`). First option: 1,219 s riding, 85 s walking, 127 s waiting, 1,431 s boarding-to-arrival. Transfer time is not deducted from the ride cap. |
-| Arrival exactly 08:45 or 09:00 for a 09:00 deadline; exactly 1,800 s on vehicles at cap 30 | Qualifies if the origin and other checks pass. A millisecond outside either inclusive bound fails before rounding. A different first boarding ID, even with the same times, fails. |
-| Two probes return the same trip; another trip has equal duration but a different service | First two collapse, preserving the first query pair; third remains eligible. First day searches on; next day stops after its first successful pair. |
-| Four qualified days and one valid empty day vs one failed probe and no positive evidence on that day | Origin `not_established` vs `incomplete`; neither enters IDs. A failed alternative alongside five positive days keeps the ID but makes the run exit `3`. |
-| Budget runs out mid-origin | Report includes the attempted day/error and partial origin, excludes unprocessed origins. Within TTL an identical rerun reuses responses with zero wire cost per hit. |
-| Exact station is the sole selected origin | Five `at_destination` journeys and the station in `mrt_lrt_ids`; zero routing and postal calls. |
+| Arrival exactly 08:45 or 09:00 for a 09:00 deadline; exactly 1,800 s on vehicles at cap 30                        | Qualifies if the origin and other checks pass. A millisecond outside either inclusive bound fails before rounding. A different first boarding ID, even with the same times, fails.                    |
+| Two probes return the same trip; another trip has equal duration but a different service                          | First two collapse, preserving the first query pair; third remains eligible. First day searches on; next day stops after its first successful pair.                                                   |
+| Four qualified days and one valid empty day vs one failed probe and no positive evidence on that day              | Origin `not_established` vs `incomplete`; neither enters IDs. A failed alternative alongside five positive days keeps the ID but makes the run exit `3`.                                              |
+| Budget runs out mid-origin                                                                                        | Report includes the attempted day/error and partial origin, excludes unprocessed origins. Within TTL an identical rerun reuses responses with zero wire cost per hit.                                 |
+| Exact station is the sole selected origin                                                                         | Five `at_destination` journeys and the station in `mrt_lrt_ids`; zero routing and postal calls.                                                                                                       |
 
 **Historical end-to-end references.** [Campus pilot](examples/ACCEPTANCE.md): eight selected origins, five dates, result bus `65009, 65709`, rail `NE16, NE17, PE6` ([full report](examples/live-results.json), [ID projection](examples/live-ids.json)). [Punggol Coast station run](examples/COAST_ACCEPTANCE.md): 246 selected of a separately prepared subset, 89 rail and 7 bus IDs qualified, 146 not established and 4 incomplete. All selected origins were processed, yet completion was false. Its [report](examples/coast-results.json) combines independent runs; sharding, summary generation and the separately derived stricter boarding-to-arrival list are **not CLI features**. The national inventory is discovery output, not proof that every stop was routed. Use captured data to compare semantics, not as an oracle for future live schedules, request counts or generation timestamps.
 
