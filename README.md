@@ -49,6 +49,16 @@ Open `http://127.0.0.1:3000/` in a browser (set `PORT=4173` to override). All PW
 | `bun run check`             | Run all six local quality gates                                                               |
 | `bun run danger:ci`         | Enforce PR size and generated-artifact policies in GitHub CI                                  |
 
+## Deployment (Cloudflare Pages)
+
+[`.github/workflows/deploy-cloudflare-pages.yml`](.github/workflows/deploy-cloudflare-pages.yml) builds `dist/public/` and deploys automatically whenever a PR is merged into `main` (and supports manual triggers via `workflow_dispatch`). `public/_headers` configures Cloudflare Pages to serve `/sw.js` with `Cache-Control: no-cache`.
+
+Configure these GitHub Actions repository secrets (pre-created with `REPLACE_ME` placeholders under **Settings → Secrets and variables → Actions**):
+
+- `CLOUDFLARE_API_TOKEN`: Cloudflare API token with **Cloudflare Pages — Edit** permission.
+- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare Account ID.
+- `CLOUDFLARE_PAGES_PROJECT_NAME`: Target Cloudflare Pages project name.
+
 ## Runtime dependencies
 
 - [`leaflet`](https://leafletjs.com/) (`BSD-2-Clause`): Interactive map rendering, uniform-opacity SVG pane for 500 m catchment unions, offline GeoJSON coastline layer, and OneMap tile integration.
