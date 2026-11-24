@@ -1,4 +1,5 @@
 import type {
+  OneMapAccount,
   QualifiedStop,
   SearchResultStatus,
   Stop,
@@ -308,4 +309,69 @@ export const renderSelectedStopCard = (
   els.selectedRideDuration.textContent = formatRideMinutes(entry.journey.rideMs)
   els.selectedServices.textContent = formatServiceChain(entry.journey)
   els.selectedJourneyDisclaimer.textContent = `One qualifying journey for ${entry.journey.searchDate} — not the fastest, latest or most frequent service.`
+}
+
+export const setMobileView = (view: 'search' | 'map' | 'stops'): void => {
+  document.body.dataset['mobileView'] = view
+}
+
+export const getSelectedWorkplaceKind = (): 'postal' | 'station' => {
+  const checked = document.querySelector<HTMLInputElement>(
+    'input[name="workplace-kind"]:checked',
+  )
+  return checked?.value === 'station' ? 'station' : 'postal'
+}
+
+export const renderConnectivityState = (
+  els: AppElements,
+  online: boolean,
+  canStartSearch: boolean,
+): void => {
+  els.offlineBanner.hidden = online
+  els.connectivityBadge.textContent = online ? 'Online' : 'Offline'
+  els.connectivityBadge.className = online
+    ? 'status-tag status-tag--online'
+    : 'status-tag status-tag--offline'
+  els.signinButton.disabled = !online
+  els.startSearchButton.disabled = !canStartSearch
+}
+
+export const renderAccountState = (
+  els: AppElements,
+  account: OneMapAccount | null,
+): void => {
+  const signedIn = account !== null
+  els.signinForm.hidden = signedIn
+  els.signedInBar.hidden = !signedIn
+  if (account) {
+    els.signedInEmail.textContent = account.email
+    els.accountStatusPill.textContent = 'Connected'
+    els.accountStatusPill.className = 'status-tag status-tag--ok'
+  } else {
+    els.accountStatusPill.textContent = 'Not connected'
+    els.accountStatusPill.className = 'status-tag status-tag--muted'
+  }
+}
+
+export const renderCounters = (
+  els: AppElements,
+  triedCount: number,
+  totalCount: number,
+  matchedCount: number,
+): void => {
+  els.stopsTriedValue.textContent = `${triedCount.toLocaleString('en-SG')} / ${totalCount.toLocaleString('en-SG')}`
+  els.stopsMatchedValue.textContent = matchedCount.toLocaleString('en-SG')
+}
+
+export const renderInlineError = (
+  element: HTMLElement,
+  message: string | null,
+): void => {
+  if (message === null) {
+    element.textContent = ''
+    element.hidden = true
+    return
+  }
+  element.textContent = message
+  element.hidden = false
 }

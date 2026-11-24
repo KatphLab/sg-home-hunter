@@ -16,18 +16,10 @@ import {
   defaultDelay,
   OneMapAuthError,
 } from '@lib/onemap-client.js'
+import { parseClockMinutes } from '@lib/singapore-calendar.js'
 
-const CLOCK_PATTERN = /^(\d{2}):(\d{2})$/
 const DEFAULT_STEP_MINUTES = 10
 const DEFAULT_MIN_INTERVAL_MS = 120
-
-const parseMinutes = (clockHHMM: string): number => {
-  const match = CLOCK_PATTERN.exec(clockHHMM)
-  if (!match) {
-    throw new Error(`Invalid clock time: ${clockHHMM}`)
-  }
-  return Number(match[1]) * 60 + Number(match[2])
-}
 
 const formatClockSeconds = (totalMinutes: number): string => {
   const hours = Math.floor(totalMinutes / 60)
@@ -43,7 +35,7 @@ export const buildDepartureSchedule = (
   if (!Number.isInteger(stepMinutes) || stepMinutes <= 0) {
     throw new Error('Departure step minutes must be a positive integer')
   }
-  const deadlineMin = parseMinutes(officeStart)
+  const deadlineMin = parseClockMinutes(officeStart)
   const earliestMin =
     deadlineMin < 7 * 60 ? Math.max(0, deadlineMin - 120) : 6 * 60
   const anchorMin = deadlineMin - (rideCapMinutes + 15)
