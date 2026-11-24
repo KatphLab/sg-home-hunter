@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-24T19:22:00+08:00",
+  "title": "Design System: House Hunter",
+  "extensions": {
+    "colorMeta": {
+      "botanical-green": {
+        "role": "primary",
+        "displayName": "Botanical Green",
+        "canonical": "#1b5e4b",
+        "tonalRamp": [
+          "#0a2920",
+          "#134436",
+          "#1b5e4b",
+          "#2c7a63",
+          "#509d86",
+          "#88c2b0",
+          "#c3e3d9",
+          "#e3efe9"
+        ]
+      },
+      "civic-vermilion": {
+        "role": "secondary",
+        "displayName": "Civic Vermilion",
+        "canonical": "#c83e2b",
+        "tonalRamp": [
+          "#59170f",
+          "#8b2012",
+          "#c83e2b",
+          "#df604e",
+          "#ec8a7c",
+          "#f4b7ae",
+          "#fae0dc",
+          "#fbeae7"
+        ]
+      },
+      "porcelain": {
+        "role": "neutral",
+        "displayName": "Porcelain",
+        "canonical": "#f6f7f5",
+        "tonalRamp": [
+          "#1a2220",
+          "#434f4b",
+          "#6e7b76",
+          "#9ba7a2",
+          "#cfd5d0",
+          "#e6e9e5",
+          "#f6f7f5",
+          "#ffffff"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Title",
+        "purpose": "Header product wordmark."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Rail section titles and selected stop name."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Form hints, caveats, and legend copy."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Inputs, metrics, and filter chips."
+      },
+      "plaque": {
+        "displayName": "Stop Plaque",
+        "purpose": "Monospace bus and rail stop codes."
+      }
+    },
+    "shadows": [
+      {
+        "name": "overlay-legend",
+        "value": "0 6px 16px rgba(26, 34, 32, 0.16)",
+        "purpose": "Floating map legend card."
+      },
+      {
+        "name": "overlay-journey",
+        "value": "0 8px 22px rgba(26, 34, 32, 0.2)",
+        "purpose": "Selected stop journey detail card."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-hover",
+        "value": "150ms ease",
+        "purpose": "Button and stop-row state transitions."
+      }
+    ],
+    "breakpoints": [{ "name": "mobile", "value": "max-width: 900px" }]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary search trigger in the rail.",
+      "html": "<button type=\"button\" class=\"ds-btn-primary\">Start search</button>",
+      "css": ".ds-btn-primary { background: #1b5e4b; color: #ffffff; padding: 8px 14px; border: 1px solid transparent; border-radius: 6px; font-weight: 600; font-size: 0.84rem; cursor: pointer; transition: background-color 150ms ease; } .ds-btn-primary:hover { background: #134436; } .ds-btn-primary:focus-visible { outline: 2px solid #1b5e4b; outline-offset: 2px; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Stops an active search while preserving partial leads.",
+      "html": "<button type=\"button\" class=\"ds-btn-danger\">Stop search</button>",
+      "css": ".ds-btn-danger { background: #c83e2b; color: #ffffff; padding: 8px 14px; border: 1px solid transparent; border-radius: 6px; font-weight: 600; font-size: 0.84rem; cursor: pointer; } .ds-btn-danger:focus-visible { outline: 2px solid #c83e2b; outline-offset: 2px; }"
+    },
+    {
+      "name": "Rail Stop Plaque",
+      "kind": "custom",
+      "refersTo": "stop-plaque-rail",
+      "description": "Rounded-square MRT/LRT code badge uniting map markers and list rows.",
+      "html": "<span class=\"ds-plaque-rail\">NS17</span>",
+      "css": ".ds-plaque-rail { display: inline-flex; align-items: center; justify-content: center; min-width: 52px; padding: 3px 6px; border-radius: 5px; background: #1b5e4b; color: #ffffff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76rem; font-weight: 700; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Bus Stop Plaque",
+      "kind": "custom",
+      "refersTo": "stop-plaque-bus",
+      "description": "Rounded-square 5-digit bus stop code badge preserving leading zeros.",
+      "html": "<span class=\"ds-plaque-bus\">01012</span>",
+      "css": ".ds-plaque-bus { display: inline-flex; align-items: center; justify-content: center; min-width: 52px; padding: 3px 6px; border-radius: 5px; background: #1a2220; color: #ffffff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76rem; font-weight: 700; font-variant-numeric: tabular-nums; }"
+    },
+    {
+      "name": "Filter Chip",
+      "kind": "chip",
+      "refersTo": "chip-active",
+      "description": "Mode filter chip for the accessible qualifying stops list.",
+      "html": "<button type=\"button\" class=\"ds-chip-active\">MRT / LRT</button>",
+      "css": ".ds-chip-active { padding: 4px 10px; border-radius: 999px; border: 1px solid #1b5e4b; background: #1b5e4b; color: #ffffff; font-size: 0.78rem; font-weight: 600; cursor: pointer; } .ds-chip-active:focus-visible { outline: 2px solid #1b5e4b; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "HDB Town Precinct Directory",
+    "overview": "House Hunter adopts the visual discipline of Singapore HDB void-deck and town-centre wayfinding boards: high-contrast daylight porcelain panels, concrete framing, unmistakable stop-ID plaques, and honest spatial caveats. It refuses dark telemetry dashboards, property-portal listing chrome, and decorative glassmorphism so commuters can scan live searches on desktop and inspect saved 500 m housing-search zones outdoors at offline property viewings.",
+    "keyCharacteristics": [
+      "Daylight-first porcelain and warm concrete shell paired with botanical green catchment zones",
+      "Rounded-square stop-ID plaques uniting interactive map markers, list rows, and journey detail cards",
+      "Strict tabular numerals for stop codes, tried/matched counters, dates, and boarding/arrival clocks",
+      "Unsoftened status tags and non-collapsible proximity caveats"
+    ],
+    "rules": [
+      {
+        "name": "The Uniform Catchment Rule",
+        "body": "All 500 m circles render at full opacity inside one shared SVG layer whose parent pane sits at 0.34 opacity, so overlapping zones merge cleanly without double-darkening seams.",
+        "section": "colors"
+      },
+      {
+        "name": "The Unsoftened Caveat Rule",
+        "body": "Offline banners, Keep the app open notices, and Partial result tags use high-contrast amber paper (#fef3c7) with #78350f ink and #d97706 borders so critical limits never blend into decorative chrome.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Figures Rule",
+        "body": "All counters (Stops tried, Matching stops), dates, clock times, ride durations, and stop IDs enforce font-variant-numeric: tabular-nums so live updates never jitter.",
+        "section": "typography"
+      },
+      {
+        "name": "The Single-Boundary Elevation Rule",
+        "body": "Never stack a 1px card border underneath a soft drop shadow; choose a crisp border for docked surfaces or a shadow for floating map overlays.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep Search date, Inventory date, and the Keep the app open while searching warning visible without accordions before starting a search.",
+      "Do preserve uniform 500 m catchment opacity using one shared SVG renderer inside commuteZonePane.",
+      "Do keep Stops tried and Matching stops visually distinct in tabular figures."
+    ],
+    "donts": [
+      "Don't add drop shadows to 1 px bordered rail panels or borders to shadowed floating overlays.",
+      "Don't use eyebrow labels, numbered section headers (01 / 02), one-sided accent bars on rounded boxes, or backdrop-filter glass blurs.",
+      "Don't gate saved offline map viewing behind OneMap sign-in."
+    ]
+  }
+}

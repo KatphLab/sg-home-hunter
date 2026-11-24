@@ -45,6 +45,7 @@
         },
         "noUnnecessaryTemplateExpression": "error",
         "useArraySome": "error",
+        "useLiteralKeys": "off",
         "useRegexpTest": "error"
       },
       "nursery": {
