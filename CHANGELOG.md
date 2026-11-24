@@ -6,6 +6,7 @@
 - Configure engineering skills for local Markdown issues, default triage labels, and single-context domain documentation.
 - Replace `Makefile` with `justfile`; use `just install` for dependency and hook setup.
 - Move the commute design to `docs/DESIGN.md` and update the README link.
+- Replace the CLI design with the client-only [PWA product spec](.scratch/commute-zones/spec.md) and [commute glossary](GLOSSARY.md).
 
 ## 2026-11-06
 

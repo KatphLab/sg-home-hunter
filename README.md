@@ -1,6 +1,6 @@
 # House Hunter
 
-Project scaffold based on [KatphLab/ts-bun-template](https://github.com/KatphLab/ts-bun-template), preserving its Bun, TypeScript, and quality-gate tooling. See [DESIGN.md](docs/DESIGN.md) for the commute-analysis requirements. The current entrypoint is the template's Bun example; the browser app and PWA are not implemented yet.
+House Hunter is a planned client-only PWA for finding places to live near a qualifying commute in Singapore. See the [PWA product spec](.scratch/commute-zones/spec.md) for the search rules, map and offline experience. The current entrypoint is still the Bun example from [KatphLab/ts-bun-template](https://github.com/KatphLab/ts-bun-template).
 
 ## Getting started
 
