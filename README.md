@@ -1,6 +1,6 @@
 # House Hunter
 
-Project scaffold based on [KatphLab/ts-bun-template](https://github.com/KatphLab/ts-bun-template), preserving its Bun, TypeScript, and quality-gate tooling. See [DESIGN.md](DESIGN.md) for the commute-analysis requirements. The current entrypoint is the template's Bun example; the browser app and PWA are not implemented yet.
+Project scaffold based on [KatphLab/ts-bun-template](https://github.com/KatphLab/ts-bun-template), preserving its Bun, TypeScript, and quality-gate tooling. See [DESIGN.md](docs/DESIGN.md) for the commute-analysis requirements. The current entrypoint is the template's Bun example; the browser app and PWA are not implemented yet.
 
 ## Getting started
 
