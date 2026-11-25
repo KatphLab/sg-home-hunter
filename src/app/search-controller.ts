@@ -213,6 +213,14 @@ const finalizeSearchRun = (
     )
   }
 
+  if (result.failedQueries > 0 && !result.authExpired) {
+    const noun = result.failedQueries === 1 ? 'request' : 'requests'
+    renderInlineError(
+      els.searchError,
+      `${String(result.failedQueries)} OneMap routing ${noun} failed, so this result is partial and was not saved offline.`,
+    )
+  }
+
   if (result.status === 'completed') {
     saveCompletedResult(window.localStorage, {
       version: 1,

@@ -387,4 +387,154 @@ describe('backward-search whole-search correctness vs baseline', () => {
     })
     expect(earlyResult.status).toBe('partial')
   })
+
+  it('marks all-failed runs as partial without counting tried stops, while empty responses complete', async () => {
+    const stop65729 = INVENTORY.stops.find((s) => s.id === '65729')
+    const stop69009 = INVENTORY.stops.find((s) => s.id === '69009')
+    if (!stop65729 || !stop69009) {
+      throw new Error('Missing fixture stops')
+    }
+    const subInventory: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: [stop65729, stop69009],
+    }
+    const networkIndex = buildTransitNetworkIndex({
+      inventory: subInventory,
+      networkDate: SEARCH_DATE,
+      busServices: {
+        '381': { name: 'Local', routes: [['65729', '69009']] },
+      },
+      busFirstLast: {
+        '65729': ['381 0530 2330 = = = ='],
+        '69009': ['381 0532 2332 = = = ='],
+      },
+    })
+
+    const failedResult = await runBackwardCommuteSearch({
+      inventory: subInventory,
+      networkIndex,
+      workplace: POSTAL_WORKPLACE,
+      constraints: CONSTRAINTS,
+      minRequestIntervalMs: 0,
+      signal: new AbortController().signal,
+      routeStop: () => Promise.reject(new Error('HTTP 500')),
+      onProgress: () => {},
+    })
+    expect(failedResult.status).toBe('partial')
+    expect(failedResult.authExpired).toBe(false)
+    expect(failedResult.triedCount).toBe(0)
+    expect(failedResult.failedQueries).toBeGreaterThan(0)
+    expect(failedResult.matches).toEqual([])
+
+    const emptyResult = await runBackwardCommuteSearch({
+      inventory: subInventory,
+      networkIndex,
+      workplace: POSTAL_WORKPLACE,
+      constraints: CONSTRAINTS,
+      minRequestIntervalMs: 0,
+      signal: new AbortController().signal,
+      routeStop: () => Promise.resolve([]),
+      onProgress: () => {},
+    })
+    expect(emptyResult.status).toBe('completed')
+    expect(emptyResult.triedCount).toBeGreaterThan(0)
+    expect(emptyResult.failedQueries).toBe(0)
+  })
+
+  it('drains transitive hints discovered during the final hint flush', async () => {
+    const subStops = INVENTORY.stops.slice(0, 4)
+    const networkIndex = buildTransitNetworkIndex({
+      inventory: {
+        inventoryDate: INVENTORY.inventoryDate,
+        stops: subStops,
+      },
+      networkDate: SEARCH_DATE,
+      busServices: {
+        '381': {
+          name: 'Local',
+          routes: [['65009', '65701', '65729', '69009']],
+        },
+      },
+      busFirstLast: {
+        '65009': ['381 0530 2330 = = = ='],
+        '65701': ['381 0535 2335 = = = ='],
+        '65729': ['381 0540 2340 = = = ='],
+        '69009': ['381 0542 2342 = = = ='],
+      },
+    })
+
+    const hintBMs = sgtMs('08:30:00')
+    const hintCMs = sgtMs('08:38:00')
+    const queried: string[] = []
+    const result = await runBackwardCommuteSearch({
+      inventory: {
+        inventoryDate: INVENTORY.inventoryDate,
+        stops: subStops,
+      },
+      networkIndex,
+      workplace: POSTAL_WORKPLACE,
+      constraints: CONSTRAINTS,
+      maxProbesPerStop: 1,
+      minRequestIntervalMs: 0,
+      signal: new AbortController().signal,
+      routeStop: (stop, depTime) => {
+        queried.push(`${stop.id}@${depTime}`)
+        if (stop.id === '65009') {
+          return Promise.resolve([
+            {
+              startTime: sgtMs('08:25:00'),
+              endTime: sgtMs('08:52:00'),
+              legs: [
+                {
+                  mode: 'BUS',
+                  startTime: sgtMs('08:25:00'),
+                  endTime: sgtMs('08:52:00'),
+                  from: { stopCode: '65009' },
+                  routeShortName: '381',
+                  intermediateStops: [
+                    { stopCode: '65701', arrival: hintBMs, departure: hintBMs },
+                  ],
+                },
+              ],
+            },
+          ])
+        }
+        if (stop.id === '65701' && depTime === '08:30:00') {
+          return Promise.resolve([
+            {
+              startTime: hintBMs,
+              endTime: sgtMs('08:52:00'),
+              legs: [
+                {
+                  mode: 'BUS',
+                  startTime: hintBMs,
+                  endTime: sgtMs('08:52:00'),
+                  from: { stopCode: '65701' },
+                  routeShortName: '381',
+                  intermediateStops: [
+                    { stopCode: '65729', arrival: hintCMs, departure: hintCMs },
+                  ],
+                },
+              ],
+            },
+          ])
+        }
+        if (stop.id === '65729' && depTime === '08:38:00') {
+          return Promise.resolve([
+            makeBusItinerary('65729', '08:38:00', '08:52:00'),
+          ])
+        }
+        return Promise.resolve([])
+      },
+      onProgress: () => {},
+    })
+
+    expect(queried).toContain('65701@08:30:00')
+    expect(queried).toContain('65729@08:38:00')
+    expect(result.matches.map((m) => m.stop.id).sort()).toEqual([
+      '65009',
+      '65701',
+      '65729',
+    ])
+  })
 })

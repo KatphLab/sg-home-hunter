@@ -7,6 +7,7 @@ import {
 } from '@lib/inventory.js'
 import {
   type BusRouterServiceEntry,
+  parseBusNetworkDate,
   serializeBusNetworkTsv,
 } from '@lib/transit-network.js'
 import { isRecord } from '@utils/guards.js'
@@ -195,11 +196,6 @@ const parseBusFirstLastJson = (raw: unknown): Record<string, string[]> => {
   return result
 }
 
-const parseNetworkDate = (rawText: string, fallbackDate: string): string => {
-  const match = /\b(\d{4}-\d{2}-\d{2})\b/.exec(rawText)
-  return match?.[1] ?? fallbackDate
-}
-
 const fetchJson = async (url: string): Promise<unknown> => {
   const response = await fetch(url)
   if (!response.ok) {
@@ -252,7 +248,7 @@ const main = async (): Promise<void> => {
 
   const busServices = parseBusServicesJson(busServicesJson)
   const busFirstLast = parseBusFirstLastJson(busFirstLastJson)
-  const networkDate = parseNetworkDate(lastUpdatedRaw, inventoryDate)
+  const networkDate = parseBusNetworkDate(lastUpdatedRaw, inventoryDate)
   const networkTsv = serializeBusNetworkTsv({
     networkDate,
     busServices,

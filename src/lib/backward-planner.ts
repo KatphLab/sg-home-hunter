@@ -66,12 +66,12 @@ interface BackwardLabel {
   readonly latestClockMs: number
   readonly estClockMs: number
   readonly transfers: number
-  readonly hasBoardedTransit: boolean
 }
 
 interface PlannerContext {
   readonly searchDate: string
   readonly dayType: DayType
+  readonly prevDayType: DayType
   readonly dayStartMs: number
   readonly deadlineMs: number
   readonly rideCapMs: number
@@ -86,54 +86,23 @@ const CLOCK_BUCKET_MS = 300_000
 const isDominated = (
   candidate: BackwardLabel,
   existing: BackwardLabel,
-): boolean => {
-  if (
-    existing.hasBoardedTransit !== candidate.hasBoardedTransit ||
-    existing.minRideMs > candidate.minRideMs ||
-    existing.estRideMs > candidate.estRideMs ||
-    existing.transfers > candidate.transfers
-  ) {
-    return false
-  }
-  return (
-    Math.floor(existing.estClockMs / CLOCK_BUCKET_MS) ===
+): boolean =>
+  existing.minRideMs <= candidate.minRideMs &&
+  existing.estRideMs <= candidate.estRideMs &&
+  existing.transfers <= candidate.transfers &&
+  existing.earliestClockMs <= candidate.earliestClockMs &&
+  existing.latestClockMs >= candidate.latestClockMs &&
+  Math.floor(existing.estClockMs / CLOCK_BUCKET_MS) ===
     Math.floor(candidate.estClockMs / CLOCK_BUCKET_MS)
-  )
-}
 
 const insertIntoLabelList = (
   existing: readonly BackwardLabel[],
   label: BackwardLabel,
 ): { readonly next: BackwardLabel[]; readonly added: boolean } => {
-  const next: BackwardLabel[] = []
-  let absorbed = false
-  for (const item of existing) {
-    if (!absorbed && isDominated(label, item)) {
-      const needsWiden =
-        label.earliestClockMs < item.earliestClockMs ||
-        label.latestClockMs > item.latestClockMs
-      next.push(
-        needsWiden
-          ? {
-              ...item,
-              earliestClockMs: Math.min(
-                item.earliestClockMs,
-                label.earliestClockMs,
-              ),
-              latestClockMs: Math.max(item.latestClockMs, label.latestClockMs),
-            }
-          : item,
-      )
-      absorbed = true
-      continue
-    }
-    if (!isDominated(item, label)) {
-      next.push(item)
-    }
+  if (existing.some((item) => isDominated(label, item))) {
+    return { next: [...existing], added: false }
   }
-  if (absorbed) {
-    return { next, added: false }
-  }
+  const next = existing.filter((item) => !isDominated(item, label))
   next.push(label)
   return { next, added: true }
 }
@@ -146,7 +115,9 @@ const insertParetoLabel = (
     frontier.get(label.stopId) ?? [],
     label,
   )
-  frontier.set(label.stopId, next)
+  if (added) {
+    frontier.set(label.stopId, next)
+  }
   return added
 }
 
@@ -221,7 +192,6 @@ const createSeedLabel = (
       latestClockMs,
     ),
     transfers: 0,
-    hasBoardedTransit: false,
   }
 }
 
@@ -241,65 +211,92 @@ const seedFinalWalkLabels = (
   return seeds
 }
 
+interface OperatingIntervalMs {
+  readonly startMs: number
+  readonly endMs: number
+}
+
+const getOperatingIntervalsForDate = (
+  seg: TransitSegment,
+  ctx: PlannerContext,
+): readonly OperatingIntervalMs[] => {
+  if (seg.operatingWindows === undefined) {
+    return [{ startMs: ctx.dayStartMs, endMs: ctx.dayStartMs + DAY_MINUTES_MS }]
+  }
+  const intervals: OperatingIntervalMs[] = []
+  const prevOp = seg.operatingWindows[ctx.prevDayType]
+  if (prevOp !== undefined && prevOp.lastMin >= 1440) {
+    const startMs = Math.max(
+      ctx.dayStartMs,
+      ctx.dayStartMs + (prevOp.firstMin - 1440) * 60_000,
+    )
+    const endMs = ctx.dayStartMs + (prevOp.lastMin - 1440) * 60_000
+    if (endMs >= startMs) {
+      intervals.push({ startMs, endMs })
+    }
+  }
+  const op = seg.operatingWindows[ctx.dayType]
+  if (op !== undefined) {
+    intervals.push({
+      startMs: ctx.dayStartMs + op.firstMin * 60_000,
+      endMs: ctx.dayStartMs + op.lastMin * 60_000,
+    })
+  }
+  return intervals
+}
+
 const stepLabelAcrossSegment = (
   label: BackwardLabel,
   seg: TransitSegment,
   round: number,
   ctx: PlannerContext,
-): BackwardLabel | null => {
+): readonly BackwardLabel[] => {
   const nextMinRide = label.minRideMs + seg.minRideMs
   if (nextMinRide > ctx.rideCapMs) {
-    return null
+    return []
   }
-  const op = seg.operatingWindows?.[ctx.dayType]
-  if (seg.operatingWindows !== undefined && op === undefined) {
-    return null
-  }
-  const opStartMs = op ? ctx.dayStartMs + op.firstMin * 60_000 : ctx.dayStartMs
-  const opEndMs = op
-    ? ctx.dayStartMs + op.lastMin * 60_000
-    : ctx.dayStartMs + DAY_MINUTES_MS
-  const nextLatest = Math.min(label.latestClockMs - seg.minRideMs, opEndMs)
   const maxStepMs = Math.max(seg.estRideMs, seg.minRideMs)
-  const nextEarliest = Math.max(
-    label.earliestClockMs - maxStepMs,
-    opStartMs,
-    ctx.minDepartureMs,
-  )
-  if (
-    nextLatest < nextEarliest ||
-    getSingaporeDateFromInstant(nextLatest) !== ctx.searchDate
-  ) {
-    return null
+  const stepped: BackwardLabel[] = []
+  for (const { startMs, endMs } of getOperatingIntervalsForDate(seg, ctx)) {
+    const nextLatest = Math.min(label.latestClockMs - seg.minRideMs, endMs)
+    const nextEarliest = Math.max(
+      label.earliestClockMs - maxStepMs,
+      startMs,
+      ctx.minDepartureMs,
+    )
+    if (
+      nextLatest < nextEarliest ||
+      getSingaporeDateFromInstant(nextLatest) !== ctx.searchDate
+    ) {
+      continue
+    }
+    stepped.push({
+      stopId: seg.fromStopId,
+      minRideMs: nextMinRide,
+      estRideMs: label.estRideMs + seg.estRideMs,
+      earliestClockMs: nextEarliest,
+      latestClockMs: nextLatest,
+      estClockMs: clamp(
+        label.estClockMs - seg.estRideMs,
+        nextEarliest,
+        nextLatest,
+      ),
+      transfers: round,
+    })
   }
-  return {
-    stopId: seg.fromStopId,
-    minRideMs: nextMinRide,
-    estRideMs: label.estRideMs + seg.estRideMs,
-    earliestClockMs: nextEarliest,
-    latestClockMs: nextLatest,
-    estClockMs: clamp(
-      label.estClockMs - seg.estRideMs,
-      nextEarliest,
-      nextLatest,
-    ),
-    transfers: round,
-    hasBoardedTransit: true,
-  }
+  return stepped
 }
 
 interface FrontierTracker {
-  readonly frontiers: Map<string, BackwardLabel[]>
+  readonly boardedFrontiers: Map<string, BackwardLabel[]>
   readonly updatedStops: Map<string, BackwardLabel[]>
-  readonly boardedStops: Set<string>
 }
 
 const recordUpdatedLabel = (
   label: BackwardLabel,
   tracker: FrontierTracker,
 ): void => {
-  tracker.boardedStops.add(label.stopId)
-  if (insertParetoLabel(tracker.frontiers, label)) {
+  if (insertParetoLabel(tracker.boardedFrontiers, label)) {
     insertParetoLabel(tracker.updatedStops, label)
   }
 }
@@ -318,6 +315,23 @@ const mergeEnteringLabels = (
   return merged
 }
 
+const stepBagAcrossSegment = (
+  bag: readonly BackwardLabel[],
+  seg: TransitSegment,
+  round: number,
+  tracker: FrontierTracker,
+  ctx: PlannerContext,
+): BackwardLabel[] => {
+  let nextBag: BackwardLabel[] = []
+  for (const label of bag) {
+    for (const stepped of stepLabelAcrossSegment(label, seg, round, ctx)) {
+      nextBag = addLabelToBag(nextBag, stepped)
+      recordUpdatedLabel(stepped, tracker)
+    }
+  }
+  return nextBag
+}
+
 const relaxEstimatedPattern = (
   pattern: TransitPattern,
   round: number,
@@ -326,25 +340,21 @@ const relaxEstimatedPattern = (
   ctx: PlannerContext,
 ): void => {
   let bag: BackwardLabel[] = []
+  let prevFromStopId: string | undefined
   for (let i = pattern.segments.length - 1; i >= 0; i -= 1) {
     const seg = pattern.segments[i]
     if (!seg) {
       continue
     }
+    if (prevFromStopId !== undefined && seg.toStopId !== prevFromStopId) {
+      bag = []
+    }
+    prevFromStopId = seg.fromStopId
     bag = mergeEnteringLabels(bag, roundInput.get(seg.toStopId))
     if (bag.length === 0) {
       continue
     }
-    let nextBag: BackwardLabel[] = []
-    for (const label of bag) {
-      const stepped = stepLabelAcrossSegment(label, seg, round, ctx)
-      if (!stepped) {
-        continue
-      }
-      nextBag = addLabelToBag(nextBag, stepped)
-      recordUpdatedLabel(stepped, tracker)
-    }
-    bag = nextBag
+    bag = stepBagAcrossSegment(bag, seg, round, tracker, ctx)
   }
 }
 
@@ -370,10 +380,7 @@ const shiftLabelByTransfer = (
   ctx: PlannerContext,
 ): BackwardLabel | null => {
   const nextLatest = label.latestClockMs - walkMs - minWaitMs
-  const nextEarliest = Math.max(
-    ctx.minDepartureMs,
-    label.earliestClockMs - walkMs - estWaitMs * 2,
-  )
+  const nextEarliest = ctx.minDepartureMs
   if (
     nextLatest < nextEarliest ||
     getSingaporeDateFromInstant(nextLatest) !== ctx.searchDate
@@ -392,16 +399,15 @@ const shiftLabelByTransfer = (
       nextLatest,
     ),
     transfers: nextRound,
-    hasBoardedTransit: true,
   }
 }
 
 const addShiftedTransfer = (
   shifted: BackwardLabel | null,
-  frontiers: Map<string, BackwardLabel[]>,
+  transferFrontiers: Map<string, BackwardLabel[]>,
   nextInput: Map<string, BackwardLabel[]>,
 ): void => {
-  if (shifted && insertParetoLabel(frontiers, shifted)) {
+  if (shifted && insertParetoLabel(transferFrontiers, shifted)) {
     insertParetoLabel(nextInput, shifted)
   }
 }
@@ -410,16 +416,13 @@ const propagateTransfers = (
   updatedStops: ReadonlyMap<string, readonly BackwardLabel[]>,
   incomingTransfers: ReadonlyMap<string, readonly TransferLink[]>,
   nextRound: number,
-  frontiers: Map<string, BackwardLabel[]>,
+  transferFrontiers: Map<string, BackwardLabel[]>,
   ctx: PlannerContext,
 ): Map<string, BackwardLabel[]> => {
   const nextInput = new Map<string, BackwardLabel[]>()
   for (const [toStopId, labels] of updatedStops.entries()) {
     const links = incomingTransfers.get(toStopId) ?? []
     for (const label of labels) {
-      if (!label.hasBoardedTransit) {
-        continue
-      }
       addShiftedTransfer(
         shiftLabelByTransfer(
           label,
@@ -430,7 +433,7 @@ const propagateTransfers = (
           nextRound,
           ctx,
         ),
-        frontiers,
+        transferFrontiers,
         nextInput,
       )
       for (const link of links) {
@@ -444,7 +447,7 @@ const propagateTransfers = (
             nextRound,
             ctx,
           ),
-          frontiers,
+          transferFrontiers,
           nextInput,
         )
       }
@@ -572,22 +575,19 @@ const compareLeads = (
 const buildSortedLeads = (
   inventory: StopInventory,
   workplace: Workplace,
-  boardedStops: ReadonlySet<string>,
-  frontiers: ReadonlyMap<string, readonly BackwardLabel[]>,
+  boardedFrontiers: ReadonlyMap<string, readonly BackwardLabel[]>,
   ctx: PlannerContext,
   maxProbesPerStop: number,
 ): readonly BackwardLead[] => {
   const stopsById = new Map(inventory.stops.map((s) => [s.id, s]))
   const leads: BackwardLead[] = []
-  for (const stopId of boardedStops) {
+  for (const [stopId, labels] of boardedFrontiers.entries()) {
     const stop = stopsById.get(stopId)
-    if (!stop || isDestinationStationMatch(stop, workplace)) {
-      continue
-    }
-    const labels = (frontiers.get(stopId) ?? []).filter(
-      (l) => l.hasBoardedTransit,
-    )
-    if (labels.length === 0) {
+    if (
+      !stop ||
+      isDestinationStationMatch(stop, workplace) ||
+      labels.length === 0
+    ) {
       continue
     }
     const lead = summarizeLead(stop, labels, ctx, maxProbesPerStop)
@@ -615,22 +615,22 @@ const relaxPatternsForRound = (
 
 const runBackwardRounds = (
   networkIndex: TransitNetworkIndex,
-  frontiers: Map<string, BackwardLabel[]>,
+  seedLabels: Map<string, BackwardLabel[]>,
   maxTransfers: number,
   ctx: PlannerContext,
-): ReadonlySet<string> => {
+): ReadonlyMap<string, readonly BackwardLabel[]> => {
   const incomingTransfers = indexIncomingTransfers(networkIndex.transfers)
-  const boardedStops = new Set<string>()
-  let roundInput = new Map<string, BackwardLabel[]>(frontiers)
+  const boardedFrontiers = new Map<string, BackwardLabel[]>()
+  const transferFrontiers = new Map<string, BackwardLabel[]>()
+  let roundInput = seedLabels
 
   for (let round = 0; round <= maxTransfers; round += 1) {
     if (roundInput.size === 0) {
       break
     }
     const tracker: FrontierTracker = {
-      frontiers,
+      boardedFrontiers,
       updatedStops: new Map<string, BackwardLabel[]>(),
-      boardedStops,
     }
     relaxPatternsForRound(
       networkIndex.patterns,
@@ -645,12 +645,12 @@ const runBackwardRounds = (
             tracker.updatedStops,
             incomingTransfers,
             round + 1,
-            frontiers,
+            transferFrontiers,
             ctx,
           )
         : new Map()
   }
-  return boardedStops
+  return boardedFrontiers
 }
 
 /** Plan prioritized boarding leads and candidate departures by searching backward from the workplace. */
@@ -675,6 +675,7 @@ export const planBackwardLeads = (
   const ctx: PlannerContext = {
     searchDate: options.constraints.searchDate,
     dayType: getServiceDayType(options.constraints.searchDate),
+    prevDayType: getServiceDayType(getSingaporeDateFromInstant(dayStartMs - 1)),
     dayStartMs,
     deadlineMs,
     rideCapMs,
@@ -684,15 +685,15 @@ export const planBackwardLeads = (
     ),
   }
 
-  const frontiers = seedFinalWalkLabels(
+  const seedLabels = seedFinalWalkLabels(
     options.inventory,
     options.workplace,
     ctx,
     maxFinalWalkMeters,
   )
-  const boardedStops = runBackwardRounds(
+  const boardedFrontiers = runBackwardRounds(
     options.networkIndex,
-    frontiers,
+    seedLabels,
     maxTransfers,
     ctx,
   )
@@ -707,8 +708,7 @@ export const planBackwardLeads = (
   const leads = buildSortedLeads(
     options.inventory,
     options.workplace,
-    boardedStops,
-    frontiers,
+    boardedFrontiers,
     ctx,
     maxProbesPerStop,
   )

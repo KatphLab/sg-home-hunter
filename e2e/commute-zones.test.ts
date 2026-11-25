@@ -551,5 +551,39 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(
       page.locator('.stop-row-btn[data-stop-id="65009"]'),
     ).toBeVisible()
+
+    // Search C: if every OneMap routing request fails (HTTP 400), treat as Partial result and keep Search A offline.
+    await context.setOffline(false)
+    await page.reload()
+    await signInViaUi(page)
+    await page.unroute('**/api/public/routingsvc/route*')
+    await page.route('**/api/public/routingsvc/route*', (route) =>
+      fulfillJson(route, 400, { error: 'upstream outage' }),
+    )
+    await page.click('input[name="workplace-kind"][value="station"]')
+    await page.selectOption('#station-select', 'NS17')
+    await page.fill('#office-start-input', '08:30')
+    await page.fill('#ride-cap-input', '15')
+    await page.click('#start-search-btn')
+    await expect(page.locator('#result-status-tag')).toHaveText(
+      'Partial result',
+      { timeout: 25_000 },
+    )
+    await expect(page.locator('#search-error')).toBeVisible()
+    await expect(page.locator('#search-error')).toContainText(
+      'was not saved offline',
+    )
+
+    await context.setOffline(true)
+    await page.reload()
+    await expect(page.locator('#result-status-tag')).toHaveText(
+      'Saved offline result',
+    )
+    await expect(page.locator('#active-constraints-summary')).toContainText(
+      'Postal 018989',
+    )
+    await expect(
+      page.locator('.stop-row-btn[data-stop-id="65009"]'),
+    ).toBeVisible()
   })
 })

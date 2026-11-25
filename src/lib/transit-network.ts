@@ -100,6 +100,15 @@ export interface ParsedBusNetworkData {
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
+/** Extract an ISO calendar date from text such as an ISO timestamp, falling back when absent. */
+export const parseBusNetworkDate = (
+  rawText: string,
+  fallbackDate: string,
+): string => {
+  const match = /(?:^|\D)(\d{4}-\d{2}-\d{2})(?:$|\D)/.exec(rawText)
+  return match?.[1] ?? fallbackDate
+}
+
 const sanitizeTsvToken = (raw: string): string =>
   raw.replace(/[\t\r\n]+/g, ' ').trim()
 
@@ -299,14 +308,15 @@ const parseHHMM = (raw: string): number | null => {
 const resolveWindowPair = (
   firstRaw: string,
   lastRaw: string,
-  prev?: OperatingWindow,
+  weekdayRef?: OperatingWindow,
 ): OperatingWindow | undefined => {
   if (firstRaw === '-' || lastRaw === '-') {
     return undefined
   }
   const firstMin =
-    firstRaw === '=' ? (prev?.firstMin ?? null) : parseHHMM(firstRaw)
-  const rawLast = lastRaw === '=' ? (prev?.lastMin ?? null) : parseHHMM(lastRaw)
+    firstRaw === '=' ? (weekdayRef?.firstMin ?? null) : parseHHMM(firstRaw)
+  const rawLast =
+    lastRaw === '=' ? (weekdayRef?.lastMin ?? null) : parseHHMM(lastRaw)
   if (firstMin === null || rawLast === null) {
     return undefined
   }
@@ -336,7 +346,7 @@ export const parseBusRouterFirstLastLine = (
   }
   const weekday = resolveWindowPair(wdF, wdL)
   const saturday = resolveWindowPair(satF, satL, weekday)
-  const sunday = resolveWindowPair(sunF, sunL, saturday ?? weekday)
+  const sunday = resolveWindowPair(sunF, sunL, weekday)
   const windows: Partial<Record<DayType, OperatingWindow>> = {}
   if (weekday) {
     windows.weekday = weekday
@@ -455,10 +465,7 @@ const computeBusSegmentTiming = (
     20_000,
     Math.round((distM / 14) * 1000 + 10_000),
   )
-  const minRideMs =
-    validDeltaMs !== null
-      ? Math.max(physicalMinMs, Math.round(validDeltaMs * 0.85))
-      : physicalMinMs
+  const minRideMs = physicalMinMs
   const estRideMs =
     validDeltaMs !== null
       ? Math.max(minRideMs, Math.round(validDeltaMs * 1.15))
@@ -501,7 +508,7 @@ const alignRouteFirstLast = (
   return aligned
 }
 
-const buildSingleBusPattern = (
+const buildBusPatternsForRoute = (
   serviceId: string,
   dirIdx: number,
   route: readonly string[],
@@ -510,30 +517,38 @@ const buildSingleBusPattern = (
     string,
     ReadonlyMap<string, readonly ParsedFirstLastEntry[]>
   >,
-): TransitPattern | null => {
+): TransitPattern[] => {
   const aligned = alignRouteFirstLast(serviceId, route, firstLastLookup)
-  const segments: TransitSegment[] = []
+  const chunks: TransitSegment[][] = []
+  let current: TransitSegment[] = []
   for (let i = 0; i < route.length - 1; i += 1) {
     const fromStop = stopsById.get(route[i] ?? '')
     const toStop = stopsById.get(route[i + 1] ?? '')
     if (!fromStop || !toStop) {
+      if (current.length > 0) {
+        chunks.push(current)
+        current = []
+      }
       continue
     }
-    segments.push(
+    current.push(
       computeBusSegmentTiming(fromStop, toStop, aligned[i], aligned[i + 1]),
     )
   }
-  if (segments.length === 0) {
-    return null
+  if (current.length > 0) {
+    chunks.push(current)
   }
-  return {
-    patternId: `bus:${serviceId}:${String(dirIdx)}`,
+  return chunks.map((segments, chunkIdx) => ({
+    patternId:
+      chunks.length === 1
+        ? `bus:${serviceId}:${String(dirIdx)}`
+        : `bus:${serviceId}:${String(dirIdx)}:${String(chunkIdx)}`,
     serviceId,
     serviceName: serviceId,
     mode: 'BUS',
     headwayMs: BUS_HEADWAY_MS,
     segments,
-  }
+  }))
 }
 
 const buildBusPatterns = (
@@ -547,16 +562,15 @@ const buildBusPatterns = (
   const patterns: TransitPattern[] = []
   for (const [serviceId, entry] of Object.entries(busServices)) {
     for (let dirIdx = 0; dirIdx < entry.routes.length; dirIdx += 1) {
-      const pattern = buildSingleBusPattern(
-        serviceId,
-        dirIdx,
-        entry.routes[dirIdx] ?? [],
-        stopsById,
-        firstLastLookup,
+      patterns.push(
+        ...buildBusPatternsForRoute(
+          serviceId,
+          dirIdx,
+          entry.routes[dirIdx] ?? [],
+          stopsById,
+          firstLastLookup,
+        ),
       )
-      if (pattern) {
-        patterns.push(pattern)
-      }
     }
   }
   return patterns
@@ -652,17 +666,43 @@ const pushStemAndLoopRail = (
   orderedStops: readonly Stop[],
   hubStationId: string,
   isLrt: boolean,
+  includeClosedLoop: boolean,
 ): void => {
   const hubIndex = orderedStops.findIndex((s) => s.id === hubStationId)
-  if (hubIndex >= 0 && orderedStops.length > hubIndex + 1) {
-    const hub = orderedStops[hubIndex]
-    const stem = orderedStops.slice(0, hubIndex + 1)
-    const loop = hub ? [...orderedStops.slice(hubIndex), hub] : []
-    pushBidirectionalRail(patterns, serviceId, stem, isLrt)
-    pushBidirectionalRail(patterns, `${serviceId}_LOOP`, loop, isLrt)
+  if (hubIndex < 0 || orderedStops.length <= hubIndex + 1) {
+    pushBidirectionalRail(patterns, serviceId, orderedStops, isLrt)
     return
   }
-  pushBidirectionalRail(patterns, serviceId, orderedStops, isLrt)
+  const hub = orderedStops[hubIndex]
+  const stem = orderedStops.slice(0, hubIndex + 1)
+  const loopTail = orderedStops.slice(hubIndex + 1)
+  const returnStem = [...stem].reverse()
+  const fwd = makeRailPattern(
+    `rail:${serviceId}:fwd`,
+    serviceId,
+    [...stem, ...loopTail, ...returnStem],
+    isLrt,
+  )
+  if (fwd) {
+    patterns.push(fwd)
+  }
+  const rev = makeRailPattern(
+    `rail:${serviceId}:rev`,
+    serviceId,
+    [...stem, ...[...loopTail].reverse(), ...returnStem],
+    isLrt,
+  )
+  if (rev) {
+    patterns.push(rev)
+  }
+  if (includeClosedLoop && hub) {
+    pushBidirectionalRail(
+      patterns,
+      `${serviceId}_LOOP`,
+      [hub, ...loopTail, hub],
+      isLrt,
+    )
+  }
 }
 
 const buildLrtPatterns = (
@@ -676,6 +716,7 @@ const buildLrtPatterns = (
     collectByPrefix(railStops, 'BP'),
     'BP6',
     true,
+    false,
   )
 
   const loopSpecs: readonly {
@@ -718,6 +759,7 @@ const buildRailTopologyPatterns = (
     collectByPrefix(railStops, 'CC'),
     'CC4',
     false,
+    true,
   )
 
   buildLrtPatterns(patterns, railStops, stopsById)

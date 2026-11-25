@@ -4,6 +4,7 @@ import {
   buildTransitNetworkIndex,
   getServiceDayType,
   haversineDistanceMeters,
+  parseBusNetworkDate,
   parseBusNetworkTsv,
   parseBusRouterFirstLastLine,
   serializeBusNetworkTsv,
@@ -118,8 +119,14 @@ describe('transit-network', () => {
       windows: {
         weekday: { firstMin: 336, lastMin: 1510 },
         saturday: { firstMin: 333, lastMin: 1509 },
-        sunday_holiday: { firstMin: 333, lastMin: 1509 },
+        sunday_holiday: { firstMin: 336, lastMin: 1510 },
       },
+    })
+
+    const svc124 = parseBusRouterFirstLastLine('124 0604 0036 0605 0040 0603 =')
+    expect(svc124?.windows.sunday_holiday).toEqual({
+      firstMin: 363,
+      lastMin: 1476,
     })
 
     const weekdayOnly = parseBusRouterFirstLastLine('44 0630 0830 - - - -')
@@ -290,5 +297,103 @@ describe('transit-network', () => {
     expect(() =>
       parseBusNetworkTsv('networkDate\t2026-11-25\nwrong\theader\tcols'),
     ).toThrow('column header mismatch')
+  })
+
+  it('keeps minRideMs at the physical lower bound instead of first-bus timetable delta', () => {
+    const inventory249A: StopInventory = {
+      inventoryDate: '2026-11-24',
+      stops: [
+        {
+          id: '21359',
+          kind: 'bus',
+          name: 'Aft ST Kinetics',
+          point: { latitude: 1.338_67, longitude: 103.709_96 },
+        },
+        {
+          id: '21349',
+          kind: 'bus',
+          name: 'GSK',
+          point: { latitude: 1.335_73, longitude: 103.709_39 },
+        },
+      ],
+    }
+    const index = buildTransitNetworkIndex({
+      inventory: inventory249A,
+      networkDate: '2026-11-26',
+      busServices: {
+        '249A': { name: '249A', routes: [['21359', '21349']] },
+      },
+      busFirstLast: {
+        '21359': ['249A 0634 0830 - - - -'],
+        '21349': ['249A 0637 0832 - - - -'],
+      },
+    })
+    const seg = index.patterns.find((p) => p.serviceId === '249A')?.segments[0]
+    expect(seg).toBeDefined()
+    expect(seg?.minRideMs).toBeLessThan(120_000)
+    expect(seg?.estRideMs).toBeGreaterThanOrEqual(180_000)
+  })
+
+  it('splits bus patterns at missing inventory stops instead of bridging across gaps', () => {
+    const gapInventory: StopInventory = {
+      inventoryDate: '2026-11-24',
+      stops: [
+        ...MINI_INVENTORY.stops.slice(0, 3),
+        {
+          id: '69099',
+          kind: 'bus',
+          name: 'After Gap',
+          point: { latitude: 1.417, longitude: 103.913 },
+        },
+      ],
+    }
+    const index = buildTransitNetworkIndex({
+      inventory: gapInventory,
+      networkDate: '2026-11-26',
+      busServices: {
+        '99': {
+          name: '99',
+          routes: [['65009', '65729', 'MISSING', '69009', '69099']],
+        },
+      },
+      busFirstLast: {},
+    })
+    const bus99 = index.patterns.filter((p) => p.serviceId === '99')
+    expect(bus99).toHaveLength(2)
+    expect(
+      bus99.map((p) => p.segments.map((s) => `${s.fromStopId}->${s.toStopId}`)),
+    ).toEqual([['65009->65729'], ['69009->69099']])
+  })
+
+  it('models Bukit Panjang LRT through-services without splitting at BP6', () => {
+    const index = buildTransitNetworkIndex({
+      inventory: MINI_INVENTORY,
+      networkDate: '2026-11-26',
+      busServices: {},
+      busFirstLast: {},
+    })
+    const bpPatterns = index.patterns.filter((p) => p.serviceId === 'BP')
+    const hasPath = (stops: readonly string[]) =>
+      bpPatterns.some((p) => {
+        const edges = p.segments.map((s) => `${s.fromStopId}->${s.toStopId}`)
+        return stops
+          .slice(0, -1)
+          .every((from, idx) =>
+            edges.includes(`${from}->${stops[idx + 1] ?? ''}`),
+          )
+      })
+    expect(hasPath(['BP1', 'BP6', 'BP7'])).toBe(true)
+    expect(hasPath(['BP7', 'BP6', 'BP1'])).toBe(true)
+  })
+
+  it('extracts ISO dates from timestamps while falling back cleanly on invalid input', () => {
+    expect(
+      parseBusNetworkDate('2026-11-20T01:23:45.678Z\n', '2026-11-26'),
+    ).toBe('2026-11-20')
+    expect(parseBusNetworkDate('Updated 2026-11-19', '2026-11-26')).toBe(
+      '2026-11-19',
+    )
+    expect(parseBusNetworkDate('12026-11-199', '2026-11-26')).toBe('2026-11-26')
+    expect(parseBusNetworkDate('', '2026-11-26')).toBe('2026-11-26')
   })
 })

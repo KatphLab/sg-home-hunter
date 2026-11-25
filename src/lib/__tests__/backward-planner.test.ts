@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { planBackwardLeads } from '@lib/backward-planner.js'
 import type {
   SearchConstraints,
+  Stop,
   StopInventory,
   Workplace,
 } from '@lib/commute-types.js'
@@ -17,15 +18,24 @@ const CONSTRAINTS: SearchConstraints = {
   rideCapMinutes: 30,
 }
 
+const WP_GATE_STOP: Stop = {
+  id: 'WP_STOP',
+  kind: 'bus',
+  name: 'Workplace Gate',
+  point: { latitude: 1.414_19, longitude: 103.9106 },
+}
+
+const WP_GATE_WORKPLACE: Workplace = {
+  kind: 'postal',
+  postalCode: '828616',
+  label: 'WP',
+  point: WP_GATE_STOP.point,
+}
+
 const INVENTORY: StopInventory = {
   inventoryDate: '2026-11-24',
   stops: [
-    {
-      id: 'WP_STOP',
-      kind: 'bus',
-      name: 'Workplace Gate',
-      point: { latitude: 1.414_19, longitude: 103.9106 },
-    },
+    WP_GATE_STOP,
     {
       id: 'MID_BUS',
       kind: 'bus',
@@ -317,5 +327,511 @@ describe('backward-planner', () => {
     expect(times[1]).toBe((times[0] ?? 0) - 360)
     expect(times[2]).toBe((times[0] ?? 0) + 360)
     expect(Math.abs((times[3] ?? 0) - (times[0] ?? 0))).toBe(720)
+  })
+
+  it('preserves same-stop transfer eligibility when shifted boarding lands in the same 5-minute clock bucket', () => {
+    const network: TransitNetworkIndex = {
+      version: 1,
+      networkDate: SEARCH_DATE,
+      inventoryDate: INVENTORY.inventoryDate,
+      provenance: [],
+      coveredStopIds: ['FAR_WEST', 'MID_BUS', 'WP_STOP'],
+      transfers: [],
+      patterns: [
+        {
+          patternId: 'main-leg',
+          serviceId: 'M1',
+          serviceName: 'M1',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'MID_BUS',
+              toStopId: 'WP_STOP',
+              minRideMs: 3 * 60_000,
+              estRideMs: 3 * 60_000,
+            },
+          ],
+        },
+        {
+          patternId: 'feeder-leg',
+          serviceId: 'F1',
+          serviceName: 'F1',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'FAR_WEST',
+              toStopId: 'MID_BUS',
+              minRideMs: 5 * 60_000,
+              estRideMs: 5 * 60_000,
+            },
+          ],
+        },
+      ],
+    }
+
+    // Workplace at WP_STOP (0m final walk): targetArrivalMs 08:52:30 -> MID_BUS estClockMs 08:49:30;
+    // shifted back 3m for same-stop transfer -> 08:46:30 (same 08:45-08:50 5-min bucket).
+    const plan = planBackwardLeads({
+      inventory: INVENTORY,
+      networkIndex: network,
+      workplace: WP_GATE_WORKPLACE,
+      constraints: CONSTRAINTS,
+      maxFinalWalkMeters: 50,
+    })
+
+    expect(plan.leads.map((l) => l.stop.id)).toContain('FAR_WEST')
+  })
+
+  it('does not prune 249A-like segments under a 2-minute ride cap when first-bus delta is 3 minutes', () => {
+    const inv249A: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: [
+        {
+          id: '21359',
+          kind: 'bus',
+          name: 'Aft ST Kinetics',
+          point: { latitude: 1.338_67, longitude: 103.709_96 },
+        },
+        {
+          id: '21349',
+          kind: 'bus',
+          name: 'GSK',
+          point: { latitude: 1.335_73, longitude: 103.709_39 },
+        },
+      ],
+    }
+    const network = buildTransitNetworkIndex({
+      inventory: inv249A,
+      networkDate: SEARCH_DATE,
+      busServices: {
+        '249A': { name: '249A', routes: [['21359', '21349']] },
+      },
+      busFirstLast: {
+        '21359': ['249A 0634 0830 - - - -'],
+        '21349': ['249A 0637 0832 - - - -'],
+      },
+    })
+    const plan = planBackwardLeads({
+      inventory: inv249A,
+      networkIndex: network,
+      workplace: {
+        kind: 'postal',
+        postalCode: '639999',
+        label: 'GSK',
+        point: { latitude: 1.335_73, longitude: 103.709_39 },
+      },
+      constraints: {
+        searchDate: SEARCH_DATE,
+        officeStart: '08:35',
+        rideCapMinutes: 2,
+      },
+    })
+    expect(plan.leads.map((l) => l.stop.id)).toContain('21359')
+  })
+
+  it('uses previous service day overnight operating windows for after-midnight boardings', () => {
+    const inv: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: INVENTORY.stops.slice(0, 2),
+    }
+
+    const overnightNetwork = buildTransitNetworkIndex({
+      inventory: inv,
+      networkDate: '2026-12-01',
+      busServices: {
+        N1: { name: 'N1', routes: [['MID_BUS', 'WP_STOP']] },
+      },
+      busFirstLast: {
+        // Weekday (Mon) runs 06:00 -> 00:35; Sat/Sun don't matter for Tue 00:30
+        MID_BUS: ['N1 0600 0035 - - - -'],
+        WP_STOP: ['N1 0605 0040 - - - -'],
+      },
+    })
+    const tuesdayPlan = planBackwardLeads({
+      inventory: inv,
+      networkIndex: overnightNetwork,
+      workplace: WP_GATE_WORKPLACE,
+      constraints: {
+        searchDate: '2026-12-01', // Tuesday
+        officeStart: '00:30',
+        rideCapMinutes: 30,
+      },
+      maxFinalWalkMeters: 50,
+    })
+    const lead = tuesdayPlan.leads.find((l) => l.stop.id === 'MID_BUS')
+    expect(lead).toBeDefined()
+    expect(
+      lead?.candidateDepartures.every((clock) => clock <= '00:30:00'),
+    ).toBe(true)
+
+    // Sunday had no service (- -), so Monday 00:30 must NOT use Monday's 06:00 morning window
+    const sundayOffNetwork = buildTransitNetworkIndex({
+      inventory: inv,
+      networkDate: '2026-11-30',
+      busServices: {
+        N1: { name: 'N1', routes: [['MID_BUS', 'WP_STOP']] },
+      },
+      busFirstLast: {
+        MID_BUS: ['N1 0600 0035 0600 0035 - -'],
+        WP_STOP: ['N1 0605 0040 0605 0040 - -'],
+      },
+    })
+    const mondayEarlyPlan = planBackwardLeads({
+      inventory: inv,
+      networkIndex: {
+        ...sundayOffNetwork,
+        patterns: sundayOffNetwork.patterns.filter((p) => p.mode === 'BUS'),
+      },
+      workplace: WP_GATE_WORKPLACE,
+      constraints: {
+        searchDate: '2026-11-30', // Monday
+        officeStart: '00:30',
+        rideCapMinutes: 30,
+      },
+      maxFinalWalkMeters: 50,
+    })
+    expect(mondayEarlyPlan.leads).toEqual([])
+  })
+
+  it('does not let transfer-walk labels to stop B displace stop A boarding probe times', () => {
+    const inv: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: [
+        WP_GATE_STOP,
+        {
+          id: 'STOP_A',
+          kind: 'bus',
+          name: 'Stop A',
+          point: { latitude: 1.409, longitude: 103.905 },
+        },
+        {
+          id: 'STOP_B',
+          kind: 'bus',
+          name: 'Stop B',
+          point: { latitude: 1.4095, longitude: 103.9055 }, // ~78m from STOP_A
+        },
+      ],
+    }
+    const network: TransitNetworkIndex = {
+      version: 1,
+      networkDate: SEARCH_DATE,
+      inventoryDate: INVENTORY.inventoryDate,
+      provenance: [],
+      coveredStopIds: ['STOP_A', 'STOP_B', 'WP_STOP'],
+      transfers: [
+        {
+          fromStopId: 'STOP_A',
+          toStopId: 'STOP_B',
+          walkMs: 60_000,
+          minTransferWaitMs: 30_000,
+          estTransferWaitMs: 120_000,
+        },
+      ],
+      patterns: [
+        {
+          patternId: 'slow-from-a',
+          serviceId: 'A1',
+          serviceName: 'A1',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'STOP_A',
+              toStopId: 'WP_STOP',
+              minRideMs: 25 * 60_000,
+              estRideMs: 25 * 60_000,
+            },
+          ],
+        },
+        {
+          patternId: 'fast-from-b',
+          serviceId: 'B1',
+          serviceName: 'B1',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'STOP_B',
+              toStopId: 'WP_STOP',
+              minRideMs: 5 * 60_000,
+              estRideMs: 5 * 60_000,
+            },
+          ],
+        },
+      ],
+    }
+
+    const plan = planBackwardLeads({
+      inventory: inv,
+      networkIndex: network,
+      workplace: WP_GATE_WORKPLACE,
+      constraints: CONSTRAINTS,
+      maxFinalWalkMeters: 50,
+    })
+
+    const leadA = plan.leads.find((l) => l.stop.id === 'STOP_A')
+    expect(leadA).toBeDefined()
+    expect(leadA?.estRideMs).toBe(25 * 60_000)
+    // Primary probe must reflect STOP_A's 25-min ride (~08:25:30), NOT STOP_B's ~08:42 transfer walk
+    expect((leadA?.candidateDepartures[0] ?? '09:00:00') <= '08:30:00').toBe(
+      true,
+    )
+  })
+
+  it('connects feeder arrivals with waits exceeding twice the estimated transfer wait', () => {
+    const network: TransitNetworkIndex = {
+      version: 1,
+      networkDate: SEARCH_DATE,
+      inventoryDate: INVENTORY.inventoryDate,
+      provenance: [],
+      coveredStopIds: ['FAR_WEST', 'MID_BUS', 'WP_STOP'],
+      transfers: [],
+      patterns: [
+        {
+          patternId: 'main-0845',
+          serviceId: 'M1',
+          serviceName: 'M1',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'MID_BUS',
+              toStopId: 'WP_STOP',
+              minRideMs: 10 * 60_000,
+              estRideMs: 10 * 60_000,
+              operatingWindows: {
+                weekday: { firstMin: 525, lastMin: 530 }, // 08:45-08:50
+              },
+            },
+          ],
+        },
+        {
+          patternId: 'feeder-0820',
+          serviceId: 'F1',
+          serviceName: 'F1',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'FAR_WEST',
+              toStopId: 'MID_BUS',
+              minRideMs: 10 * 60_000,
+              estRideMs: 10 * 60_000,
+              operatingWindows: {
+                weekday: { firstMin: 480, lastMin: 500 }, // 08:00-08:20 (arrives 08:30, 15m wait)
+              },
+            },
+          ],
+        },
+      ],
+    }
+
+    const plan = planBackwardLeads({
+      inventory: INVENTORY,
+      networkIndex: network,
+      workplace: WP_GATE_WORKPLACE,
+      constraints: CONSTRAINTS,
+      maxFinalWalkMeters: 50,
+    })
+
+    expect(plan.leads.map((l) => l.stop.id)).toContain('FAR_WEST')
+  })
+
+  it('does not discard a label with a wider feasible interval for a cheaper narrow-window label', () => {
+    for (const order of ['cheap-first', 'wide-first'] as const) {
+      const cheapPattern = {
+        patternId: 'cheap-narrow',
+        serviceId: 'C1',
+        serviceName: 'C1',
+        mode: 'BUS' as const,
+        headwayMs: 600_000,
+        segments: [
+          {
+            fromStopId: 'MID_BUS',
+            toStopId: 'WP_STOP',
+            minRideMs: 5 * 60_000,
+            estRideMs: 5 * 60_000,
+            operatingWindows: {
+              weekday: { firstMin: 522, lastMin: 523 }, // 08:42-08:43
+            },
+          },
+        ],
+      }
+      const widePattern = {
+        patternId: 'wide-slower',
+        serviceId: 'W1',
+        serviceName: 'W1',
+        mode: 'BUS' as const,
+        headwayMs: 600_000,
+        segments: [
+          {
+            fromStopId: 'MID_BUS',
+            toStopId: 'WP_STOP',
+            minRideMs: 10 * 60_000,
+            estRideMs: 10 * 60_000,
+            operatingWindows: {
+              weekday: { firstMin: 520, lastMin: 530 }, // 08:40-08:50
+            },
+          },
+        ],
+      }
+      const feederPattern = {
+        patternId: 'feeder-0846',
+        serviceId: 'F1',
+        serviceName: 'F1',
+        mode: 'BUS' as const,
+        headwayMs: 600_000,
+        segments: [
+          {
+            fromStopId: 'FAR_WEST',
+            toStopId: 'MID_BUS',
+            minRideMs: 5 * 60_000,
+            estRideMs: 5 * 60_000,
+            operatingWindows: {
+              // Departs 08:41 -> arrives MID_BUS 08:46 -> misses 08:43, connects to 08:50
+              weekday: { firstMin: 521, lastMin: 521 },
+            },
+          },
+        ],
+      }
+
+      const network: TransitNetworkIndex = {
+        version: 1,
+        networkDate: SEARCH_DATE,
+        inventoryDate: INVENTORY.inventoryDate,
+        provenance: [],
+        coveredStopIds: ['FAR_WEST', 'MID_BUS', 'WP_STOP'],
+        transfers: [],
+        patterns:
+          order === 'cheap-first'
+            ? [cheapPattern, widePattern, feederPattern]
+            : [widePattern, cheapPattern, feederPattern],
+      }
+      const plan = planBackwardLeads({
+        inventory: INVENTORY,
+        networkIndex: network,
+        workplace: WP_GATE_WORKPLACE,
+        constraints: CONSTRAINTS,
+        maxFinalWalkMeters: 50,
+      })
+
+      expect(plan.leads.map((l) => l.stop.id)).toContain('FAR_WEST')
+    }
+  })
+
+  it('does not bridge labels across a missing inventory stop in a bus route', () => {
+    const gapNetwork = buildTransitNetworkIndex({
+      inventory: {
+        inventoryDate: INVENTORY.inventoryDate,
+        stops: [
+          WP_GATE_STOP,
+          INVENTORY.stops[1] ?? WP_GATE_STOP, // MID_BUS
+          {
+            id: 'PRE_GAP_B',
+            kind: 'bus',
+            name: 'Pre Gap B',
+            point: { latitude: 1.406, longitude: 103.903 },
+          },
+          {
+            id: 'PRE_GAP_A',
+            kind: 'bus',
+            name: 'Pre Gap A',
+            point: { latitude: 1.404, longitude: 103.901 },
+          },
+        ],
+      },
+      networkDate: SEARCH_DATE,
+      busServices: {
+        '77': {
+          name: '77',
+          routes: [
+            ['PRE_GAP_A', 'PRE_GAP_B', 'MISSING_STOP', 'MID_BUS', 'WP_STOP'],
+          ],
+        },
+      },
+      busFirstLast: {},
+      maxTransferWalkMeters: 10,
+    })
+    const plan = planBackwardLeads({
+      inventory: {
+        inventoryDate: INVENTORY.inventoryDate,
+        stops: [
+          WP_GATE_STOP,
+          INVENTORY.stops[1] ?? WP_GATE_STOP,
+          {
+            id: 'PRE_GAP_B',
+            kind: 'bus',
+            name: 'Pre Gap B',
+            point: { latitude: 1.406, longitude: 103.903 },
+          },
+          {
+            id: 'PRE_GAP_A',
+            kind: 'bus',
+            name: 'Pre Gap A',
+            point: { latitude: 1.404, longitude: 103.901 },
+          },
+        ],
+      },
+      networkIndex: {
+        ...gapNetwork,
+        patterns: gapNetwork.patterns.filter((p) => p.mode === 'BUS'),
+      },
+      workplace: WP_GATE_WORKPLACE,
+      constraints: CONSTRAINTS,
+      maxFinalWalkMeters: 50,
+    })
+    expect(plan.leads.map((l) => l.stop.id)).toEqual(['MID_BUS'])
+  })
+
+  it('reaches BP1 from BP7 on Bukit Panjang LRT with zero transfers', () => {
+    const bp7Point = { latitude: 1.377_756, longitude: 103.766_634 }
+    const bpStops: Stop[] = [
+      {
+        id: 'BP1',
+        kind: 'rail',
+        name: 'Choa Chu Kang',
+        point: { latitude: 1.384_749, longitude: 103.744_534 },
+      },
+      {
+        id: 'BP6',
+        kind: 'rail',
+        name: 'Bukit Panjang',
+        point: { latitude: 1.378_296, longitude: 103.762_138 },
+      },
+      {
+        id: 'BP7',
+        kind: 'rail',
+        name: 'Petir',
+        point: bp7Point,
+      },
+    ]
+    const bpInventory: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: bpStops,
+    }
+    const network = buildTransitNetworkIndex({
+      inventory: bpInventory,
+      networkDate: SEARCH_DATE,
+      busServices: {},
+      busFirstLast: {},
+    })
+    const plan = planBackwardLeads({
+      inventory: bpInventory,
+      networkIndex: network,
+      workplace: {
+        kind: 'station',
+        stationId: 'BP7',
+        label: 'BP7 Petir',
+        point: bp7Point,
+      },
+      constraints: CONSTRAINTS,
+      maxTransfers: 0,
+    })
+
+    const bp1Lead = plan.leads.find((l) => l.stop.id === 'BP1')
+    expect(bp1Lead).toBeDefined()
+    expect(bp1Lead?.transfers).toBe(0)
   })
 })

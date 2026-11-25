@@ -227,20 +227,18 @@ const verifyStopDeparture = async (
     if (options.signal.aborted) {
       return 'stop'
     }
-    tracker.triedStopIds.add(stop.id)
     tracker.errorsCount += 1
     publishSnapshot(tracker, passNumber)
     return 'ok'
   }
 }
 
-const flushQueuedHints = async (
+const flushHintBatch = async (
+  entries: readonly (readonly [string, string])[],
   passNumber: number,
   options: RunBackwardSearchOptions,
   tracker: VerificationTracker,
 ): Promise<'ok' | 'stop'> => {
-  const entries = [...tracker.queuedHints.entries()]
-  tracker.queuedHints.clear()
   for (const [stopId, departureTime] of entries) {
     if (options.signal.aborted) {
       return 'stop'
@@ -257,6 +255,23 @@ const flushQueuedHints = async (
         options,
         tracker,
       )) === 'stop'
+    ) {
+      return 'stop'
+    }
+  }
+  return 'ok'
+}
+
+const flushQueuedHints = async (
+  passNumber: number,
+  options: RunBackwardSearchOptions,
+  tracker: VerificationTracker,
+): Promise<'ok' | 'stop'> => {
+  while (tracker.queuedHints.size > 0) {
+    const entries = [...tracker.queuedHints.entries()]
+    tracker.queuedHints.clear()
+    if (
+      (await flushHintBatch(entries, passNumber, options, tracker)) === 'stop'
     ) {
       return 'stop'
     }
@@ -378,6 +393,9 @@ export const runBackwardCommuteSearch = async (
       status = 'partial'
       break
     }
+  }
+  if (tracker.errorsCount > 0) {
+    status = 'partial'
   }
 
   return {
