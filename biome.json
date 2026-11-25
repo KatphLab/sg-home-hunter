@@ -106,7 +106,7 @@
         "noSkippedTests": "error",
         "noDeprecatedImports": "error",
         "noForIn": "error",
-        "noUnnecessaryConditions": "error",
+        "noUnnecessaryConditions": "off",
         "useArraySortCompare": "error",
         "useAwait": "error",
         "useErrorMessage": "error",

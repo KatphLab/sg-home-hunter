@@ -10,20 +10,13 @@ Ask the user before modifying quality-gate configuration: `.dependency-cruiser.t
 
 ## Implementation
 
-- Write TypeScript modules; reuse existing modules before adding code.
 - Make the smallest complete change and remove obsolete paths when replacing behavior.
-- Include dependency rationale plus security and license impact in the PR or commit.
-- Update documentation when public behavior or contributor workflows change.
-- Use `YYYY-MM-DD` headings for changelog entries, not version numbers.
-- Normalize unknown thrown values to `Error` at module boundaries. Keep user-facing errors safe and actionable while preserving useful developer diagnostics.
-- For judgement-call design and review standards not enforced by linters, see `CODING_STANDARDS.md`.
+- Before editing or reviewing modules, error boundaries, E2E/PWA tests, protected configs, dependencies, docs, or changelog entries, read `CODING_STANDARDS.md`.
 
 ## Verification
 
 - Cover changed behavior, state transitions, contracts, and reachable errors.
-- Run targeted verification and `bun run check` before claiming completion, plus `bun run test:e2e` when browser or PWA behavior changes.
-- Preserve 90% line and function coverage and the inherited static-analysis gates.
-- Semgrep runs in CI; run `semgrep scan --config .semgrep.yml --error .` locally when security rules or affected code change.
+- Run `bun run fix` then `bun run check` before claiming completion, plus `bun run semgrep` when security-sensitive code changes and `bun run test:e2e` when browser or PWA behavior changes.
 
 ## Agent skills
 

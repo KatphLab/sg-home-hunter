@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { danger, fail, schedule, warn } from 'danger'
 
 const { created_files, modified_files, deleted_files } = danger.git
@@ -6,6 +7,7 @@ const MAX_FILES_CHANGED = 20
 const MAX_LINES_CHANGED = 1200
 const MAX_DELETIONS = 400
 const MAX_ADDITIONS = 1000
+const MAX_SOURCE_FILE_LINES = 450
 
 const TEST_FILE_PATTERNS = [
   /\.test\.[jt]sx?$/,
@@ -39,6 +41,27 @@ const countLines = (text: string): number => {
   return text.endsWith('\n') ? lines - 1 : lines
 }
 
+const warnOversizedSourceFiles = async (
+  files: readonly string[],
+): Promise<void> => {
+  for (const file of files) {
+    if (!/^src\//.test(file) || isExcludedFromSizeCheck(file)) {
+      continue
+    }
+    try {
+      const content = await readFile(file, 'utf8')
+      const lines = countLines(content)
+      if (lines > MAX_SOURCE_FILE_LINES) {
+        warn(
+          `${file} has ${lines} lines (soft limit ${MAX_SOURCE_FILE_LINES}). Split single-purpose helpers into cohesive modules before exceeding an 800-line read window.`,
+        )
+      }
+    } catch {
+      // File removed or unreadable in workspace; skip size check.
+    }
+  }
+}
+
 const runSizeChecks = async (): Promise<void> => {
   let additions = 0
   let deletions = 0
@@ -50,6 +73,8 @@ const runSizeChecks = async (): Promise<void> => {
       deletions += countLines(diff.removed)
     }
   }
+
+  await warnOversizedSourceFiles([...created_files, ...modified_files])
 
   const totalChanges = additions + deletions
 

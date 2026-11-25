@@ -2,6 +2,7 @@
 
 ## 2026-11-25
 
+- Align local quality gates and agent docs with CI: add non-short-circuiting `scripts/check-all.ts` (including `build`), add CI-matching `bun run semgrep`, disable Biome `noUnnecessaryConditions` due to its conflict with TypeScript `noUncheckedIndexedAccess`, ignore `.scratch/` cache artifacts, warn on oversized `src/` modules in `dangerfile.ts`, and deduplicate `AGENTS.md`.
 - Switch production PWA commute searches from the 19-pass breadth-first scheduler to the calibrated backward commute search (`runBackwardCommuteSearch`), cutting requests and search time substantially while keeping OneMap as the confirmation oracle; remove the obsolete scheduler and prototype benchmark harness.
 - Bundle compact BusRouter SG bus routes and first/last timings in `public/data/bus-network.tsv` (pre-cached by Service Worker `house-hunter-shell-v3`) and update `bun run inventory:refresh` to refresh both `stops.tsv` and `bus-network.tsv` together.
 - Reuse confirmed boarding points within each commute search and check promising intermediate departures without assuming that passengers can board there.
