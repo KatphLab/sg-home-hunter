@@ -248,34 +248,106 @@ describe('backward-planner', () => {
     expect(ids).toContain('NE16')
   })
 
-  it('caps borderline leads whose estimated ride exceeds ride cap to at most 1 candidate probe', () => {
-    const network = buildTransitNetworkIndex({
-      inventory: INVENTORY,
+  it('caps borderline leads whose estimated ride exceeds ride cap to at most 2 candidate probes', () => {
+    const network: TransitNetworkIndex = {
+      version: 1,
       networkDate: SEARCH_DATE,
-      busServices: {},
-      busFirstLast: {},
-    })
-    const ne18 = INVENTORY.stops.find((s) => s.id === 'NE18')
-    if (!ne18) {
-      throw new Error('Missing NE18')
+      inventoryDate: INVENTORY.inventoryDate,
+      provenance: [],
+      coveredStopIds: ['MID_BUS', 'WP_STOP'],
+      transfers: [],
+      patterns: [
+        {
+          patternId: 'borderline-bus',
+          serviceId: 'B1',
+          serviceName: 'B1',
+          mode: 'BUS',
+          timingKind: 'estimated',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'MID_BUS',
+              toStopId: 'WP_STOP',
+              minRideMs: 3 * 60_000,
+              estRideMs: 5 * 60_000,
+            },
+          ],
+        },
+      ],
     }
     const plan = planBackwardLeads({
       inventory: INVENTORY,
       networkIndex: network,
-      workplace: {
-        kind: 'station',
-        stationId: 'NE18',
-        label: 'NE18 Punggol Coast',
-        point: ne18.point,
-      },
+      workplace: POSTAL_WORKPLACE,
       constraints: { ...CONSTRAINTS, rideCapMinutes: 4 },
-      maxProbesPerStop: 3,
+      maxProbesPerStop: 4,
     })
 
     const borderline = plan.leads.filter((l) => l.estRideMs > 4 * 60_000)
-    for (const lead of borderline) {
-      expect(lead.candidateDepartures.length).toBeLessThanOrEqual(1)
+    expect(borderline).toHaveLength(1)
+    expect(borderline[0]?.candidateDepartures.length).toBe(2)
+  })
+
+  it('applies a 4-minute interchange walk floor for same-point non-matching rail stations and symmetric 4-probe bracketing', () => {
+    const interchangeInventory: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: [
+        {
+          id: 'NS17',
+          kind: 'rail',
+          name: 'Bishan',
+          point: { latitude: 1.351_455, longitude: 103.848_263 },
+        },
+        {
+          id: 'CC15',
+          kind: 'rail',
+          name: 'Bishan',
+          point: { latitude: 1.351_455, longitude: 103.848_263 },
+        },
+        {
+          id: 'CC16',
+          kind: 'rail',
+          name: 'Marymount',
+          point: { latitude: 1.348_707, longitude: 103.839_423 },
+        },
+      ],
     }
+    const network = buildTransitNetworkIndex({
+      inventory: interchangeInventory,
+      networkDate: SEARCH_DATE,
+      busServices: {},
+      busFirstLast: {},
+    })
+    const ns17 = interchangeInventory.stops[0]
+    if (!ns17) {
+      throw new Error('Missing NS17')
+    }
+    const plan = planBackwardLeads({
+      inventory: interchangeInventory,
+      networkIndex: network,
+      workplace: {
+        kind: 'station',
+        stationId: 'NS17',
+        label: 'NS17 Bishan',
+        point: ns17.point,
+      },
+      constraints: CONSTRAINTS,
+      maxProbesPerStop: 4,
+    })
+
+    const cc16Lead = plan.leads.find((l) => l.stop.id === 'CC16')
+    expect(cc16Lead).toBeDefined()
+    expect(cc16Lead?.candidateDepartures).toHaveLength(4)
+    const primaryClock = cc16Lead?.candidateDepartures[0] ?? '09:00:00'
+    // With 4-min interchange walk floor + ~2m CC16->CC15 ride + 2m forward bias, primary must be <= 08:45:00
+    expect(primaryClock <= '08:45:00').toBe(true)
+    const times = (cc16Lead?.candidateDepartures ?? []).map((c) => {
+      const [h = 0, m = 0, s = 0] = c.split(':').map(Number)
+      return h * 3600 + m * 60 + s
+    })
+    expect(times[1]).toBe((times[0] ?? 0) - 360)
+    expect(times[2]).toBe((times[0] ?? 0) + 360)
+    expect(Math.abs((times[3] ?? 0) - (times[0] ?? 0))).toBe(720)
   })
 
   it('enforces GTFS calendar start/end dates and calendar_dates add/remove exceptions', () => {

@@ -24,12 +24,15 @@ import {
 const ARRIVAL_WINDOW_EARLY_MS = 900_000
 const DEFAULT_MAX_FINAL_WALK_M = 1200
 const DEFAULT_MAX_TRANSFERS = 2
-const DEFAULT_MAX_PROBES_PER_STOP = 2
+const DEFAULT_MAX_PROBES_PER_STOP = 4
 const MIN_DEPARTURE_LOOKBACK_MS = 120 * 60_000
 const SAME_STOP_MIN_WAIT_MS = 30_000
 const SAME_STOP_EST_WAIT_MS = 180_000
+const PRIMARY_FORWARD_BIAS_MS = 2 * 60_000
 const BRACKET_OFFSET_MS = 6 * 60_000
-const DISTINCT_BRANCH_GAP_MS = 4 * 60_000
+const DISTINCT_BRANCH_GAP_MS = 10 * 60_000
+const INTERCHANGE_MIN_EST_WALK_MS = 240_000
+const INTERCHANGE_MIN_MAX_WALK_MS = 360_000
 const DAY_MINUTES_MS = 1440 * 60_000
 
 export interface BackwardLead {
@@ -165,6 +168,35 @@ const addLabelToBag = (
   label: BackwardLabel,
 ): BackwardLabel[] => insertIntoLabelList(bag, label).next
 
+const computeFinalWalkBounds = (
+  stop: Stop,
+  workplace: Workplace,
+  distM: number,
+): {
+  readonly minWalkMs: number
+  readonly estWalkMs: number
+  readonly maxWalkMs: number
+} => {
+  const minWalkMs = distM < 30 ? 0 : Math.round((distM / 1.5) * 1000)
+  const rawEstWalkMs =
+    distM < 30 ? 0 : Math.round(((distM * 1.35) / 1.25) * 1000)
+  const rawMaxWalkMs =
+    distM < 30 ? 0 : Math.round(((distM * 1.45) / 0.9) * 1000)
+  const isOtherInterchange =
+    workplace.kind === 'station' &&
+    stop.id !== workplace.stationId &&
+    distM < 100
+  return {
+    minWalkMs,
+    estWalkMs: isOtherInterchange
+      ? Math.max(INTERCHANGE_MIN_EST_WALK_MS, rawEstWalkMs)
+      : rawEstWalkMs,
+    maxWalkMs: isOtherInterchange
+      ? Math.max(INTERCHANGE_MIN_MAX_WALK_MS, rawMaxWalkMs)
+      : rawMaxWalkMs,
+  }
+}
+
 const createSeedLabel = (
   stop: Stop,
   workplace: Workplace,
@@ -175,10 +207,11 @@ const createSeedLabel = (
   if (distM > maxFinalWalkMeters) {
     return null
   }
-  const walkScale = distM < 30 ? 0 : 1000
-  const minWalkMs = Math.round((distM / 1.5) * walkScale)
-  const estWalkMs = Math.round((distM / 1.25) * walkScale)
-  const maxWalkMs = Math.round((distM / 0.9) * walkScale)
+  const { minWalkMs, estWalkMs, maxWalkMs } = computeFinalWalkBounds(
+    stop,
+    workplace,
+    distM,
+  )
   const latestClockMs = ctx.deadlineMs - minWalkMs
   const windowStartMs = ctx.deadlineMs - ARRIVAL_WINDOW_EARLY_MS
   const earliestClockMs = Math.max(
@@ -571,24 +604,57 @@ const orderLabelsForProbe = (
 
 const appendBracketInstants = (
   chosenInstants: number[],
-  primary: BackwardLabel | undefined,
+  primary: BackwardLabel,
   ctx: PlannerContext,
   maxProbesPerStop: number,
 ): void => {
-  if (!primary || primary.isScheduled) {
-    return
-  }
-  for (const offset of [-BRACKET_OFFSET_MS, BRACKET_OFFSET_MS]) {
+  const anchorMs = clamp(
+    primary.estClockMs - PRIMARY_FORWARD_BIAS_MS,
+    ctx.dayStartMs,
+    ctx.deadlineMs,
+  )
+  const fourthOffset =
+    anchorMs + 2 * BRACKET_OFFSET_MS <= primary.latestClockMs
+      ? 2 * BRACKET_OFFSET_MS
+      : -2 * BRACKET_OFFSET_MS
+  const offsets = [0, -BRACKET_OFFSET_MS, BRACKET_OFFSET_MS, fourthOffset]
+  for (const offset of offsets) {
     if (chosenInstants.length >= maxProbesPerStop) {
       return
     }
-    const probeMs = clamp(
-      primary.estClockMs + offset,
-      ctx.dayStartMs,
-      ctx.deadlineMs,
-    )
+    const probeMs = clamp(anchorMs + offset, ctx.dayStartMs, ctx.deadlineMs)
     if (getSingaporeDateFromInstant(probeMs) === ctx.searchDate) {
       chosenInstants.push(probeMs)
+    }
+  }
+}
+
+const appendParetoBranchInstants = (
+  chosenInstants: number[],
+  ordered: readonly BackwardLabel[],
+  ctx: PlannerContext,
+  maxProbesPerStop: number,
+): void => {
+  for (const label of ordered) {
+    if (chosenInstants.length >= maxProbesPerStop) {
+      return
+    }
+    const candidateMs = label.isScheduled
+      ? label.estClockMs
+      : clamp(
+          label.estClockMs - PRIMARY_FORWARD_BIAS_MS,
+          ctx.dayStartMs,
+          ctx.deadlineMs,
+        )
+    const minGap = label.isScheduled ? 60_000 : DISTINCT_BRANCH_GAP_MS
+    const nearExisting = chosenInstants.some(
+      (ms) => Math.abs(ms - candidateMs) < minGap,
+    )
+    if (
+      !nearExisting &&
+      getSingaporeDateFromInstant(candidateMs) === ctx.searchDate
+    ) {
+      chosenInstants.push(candidateMs)
     }
   }
 }
@@ -600,18 +666,11 @@ const buildCandidateDepartures = (
 ): readonly string[] => {
   const ordered = orderLabelsForProbe(labels, ctx.rideCapMs)
   const chosenInstants: number[] = []
-  for (const label of ordered) {
-    if (chosenInstants.length >= maxProbesPerStop) {
-      break
-    }
-    const nearExisting = chosenInstants.some(
-      (ms) => Math.abs(ms - label.estClockMs) < DISTINCT_BRANCH_GAP_MS,
-    )
-    if (!nearExisting) {
-      chosenInstants.push(label.estClockMs)
-    }
+  const primary = ordered[0]
+  if (primary && !primary.isScheduled) {
+    appendBracketInstants(chosenInstants, primary, ctx, maxProbesPerStop)
   }
-  appendBracketInstants(chosenInstants, ordered[0], ctx, maxProbesPerStop)
+  appendParetoBranchInstants(chosenInstants, ordered, ctx, maxProbesPerStop)
 
   const uniqueClocks: string[] = []
   for (const ms of chosenInstants) {
@@ -640,7 +699,7 @@ const summarizeLead = (
     isScheduled = isScheduled || label.isScheduled
   }
   const effectiveMaxProbes =
-    estRideMs > ctx.rideCapMs ? Math.min(1, maxProbesPerStop) : maxProbesPerStop
+    estRideMs > ctx.rideCapMs ? Math.min(2, maxProbesPerStop) : maxProbesPerStop
   const candidateDepartures = buildCandidateDepartures(
     labels,
     ctx,

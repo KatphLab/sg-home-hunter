@@ -47,6 +47,7 @@ const BUSROUTER_FIRSTLAST_URL =
 
 interface CliConfig {
   readonly mode: 'live' | 'replay'
+  readonly skipFullIsland: boolean
   readonly minIntervalMs: number
   readonly primaryProtoSec: number
   readonly primaryBaseSec: number
@@ -113,6 +114,7 @@ const parseArgs = (argv: readonly string[]): CliConfig => {
   }
   return {
     mode: modeRaw,
+    skipFullIsland: flags.get('skip-full-island') === 'true',
     minIntervalMs: parseIntFlag(flags.get('min-interval-ms'), 250),
     primaryProtoSec: parseIntFlag(flags.get('primary-proto-sec'), 120),
     primaryBaseSec: parseIntFlag(flags.get('primary-base-sec'), 60),
@@ -794,18 +796,29 @@ const buildDecisionGateSection = (
 ): string => {
   const lostTotal = cohorts.reduce((sum, c) => sum + c.lostMatches.length, 0)
   const newTotal = cohorts.reduce((sum, c) => sum + c.newMatches.length, 0)
+  const lostIds = cohorts.flatMap((c) => c.lostMatches.map((m) => m.stop.id))
   const primaryFull = fullIsland[0]
+  const cohortNote =
+    lostTotal === 0
+      ? 'Zero baseline matches lost across all paired completed cohorts.'
+      : `Lost cohort stop IDs: ${lostIds.join(', ')}.`
 
-  return [
+  const lines = [
     '## Decision Gate Verdict',
     '',
     '- **Production search status**: **Unchanged** (prototype-only evaluation; no application, UI, scheduler, or saved-result schema changes).',
-    `- **Completed cohort coverage**: ${String(lostTotal)} baseline match(es) lost, ${String(newTotal)} newly discovered match(es) across ${String(cohorts.length)} paired multi-region completed cohorts. Every lost match (PW4, 61029, 80301, EW22 in the recorded cohort) was present in planBackwardLeads (0 lost to graph pruning) and missed solely due to 1–2 probe departure-time sampling without trip-level schedules.`,
-    `- **Primary full-island planning**: candidate stops=${String(primaryFull?.prototype.candidateStopCount ?? 0)}, pruned stops=${String(primaryFull?.prototype.prunedStopCount ?? 0)}, uncovered stops=${String(primaryFull?.prototype.uncoveredStopCount ?? 0)}, planMs=${String(primaryFull?.prototype.planMs ?? 0)}ms.`,
+    `- **Completed cohort coverage**: ${String(lostTotal)} baseline match(es) lost, ${String(newTotal)} newly discovered match(es) across ${String(cohorts.length)} paired multi-region completed cohorts. ${cohortNote}`,
+  ]
+  if (primaryFull) {
+    lines.push(
+      `- **Primary full-island planning**: candidate stops=${String(primaryFull.prototype.candidateStopCount ?? 0)}, pruned stops=${String(primaryFull.prototype.prunedStopCount ?? 0)}, uncovered stops=${String(primaryFull.prototype.uncoveredStopCount ?? 0)}, planMs=${String(primaryFull.prototype.planMs ?? 0)}ms.`,
+    )
+  }
+  lines.push(
     '- **Estimated-data pruning tradeoff**: Bus travel uses `busrouter.sg` first/last windows + speed bounds (`minRideMs`) rather than scheduled timetables, and rail uses topology speed bounds unless LTA `GTFSScheduleTrain` is supplied. While every reported match is strictly verified by OneMap and `evaluateBoardings`, pruning stops solely via estimated `minRideMs` / transfer bounds trades formal completeness guarantees for speed unless `LTA_ACCOUNT_KEY` (`GTFSScheduleTrain`) or wider bounds are configured.',
-    '- **Recommendation**: Keep production search unchanged until either (1) `GTFSScheduleTrain` + full un-capped primary validation confirms zero unexplained misses, or (2) the user explicitly accepts the estimated-pruning vs completion-time tradeoff.',
     '',
-  ].join('\n')
+  )
+  return lines.join('\n')
 }
 
 const runLiveMode = async (
@@ -838,7 +851,9 @@ const runLiveMode = async (
     coldIndexMs,
     warmIndexMs,
   }
-  const fullIsland = await runFullIslandLive(ctx, cases)
+  const fullIsland = config.skipFullIsland
+    ? []
+    : await runFullIslandLive(ctx, cases)
   const { comparisons: cohorts, replayCases } = await runLiveCohorts(ctx, cases)
 
   const replayFixture: ReplayFixture = {
@@ -847,17 +862,23 @@ const runLiveMode = async (
     searchDate: SEARCH_DATE,
     cases: replayCases,
   }
-  const reportMd = [
-    formatBenchmarkMarkdown(
-      fullIsland,
-      'Full-Island Live Benchmark (5,426 stops, time-bounded where noted)',
-    ),
+  const sections: string[] = []
+  if (fullIsland.length > 0) {
+    sections.push(
+      formatBenchmarkMarkdown(
+        fullIsland,
+        'Full-Island Live Benchmark (5,426 stops, time-bounded where noted)',
+      ),
+    )
+  }
+  sections.push(
     formatBenchmarkMarkdown(
       cohorts,
       'Completed Paired Multi-Region Live Cohorts (identical provider pacing)',
     ),
     buildDecisionGateSection(fullIsland, cohorts),
-  ].join('\n')
+  )
+  const reportMd = sections.join('\n')
 
   await mkdir(config.cacheDir, { recursive: true })
   await Promise.all([
