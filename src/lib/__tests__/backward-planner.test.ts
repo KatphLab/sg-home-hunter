@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import { planBackwardLeads } from '@lib/backward-planner.js'
 import type {
   SearchConstraints,
@@ -6,9 +7,12 @@ import type {
   StopInventory,
   Workplace,
 } from '@lib/commute-types.js'
+import { parseStopInventory } from '@lib/inventory.js'
 import {
   buildTransitNetworkIndex,
+  parseBusNetworkTsv,
   type TransitNetworkIndex,
+  type TransitPattern,
 } from '@lib/transit-network.js'
 
 const SEARCH_DATE = '2026-11-26'
@@ -1109,5 +1113,601 @@ describe('backward-planner', () => {
       maxFinalWalkMeters: 50,
     })
     expect(cc34Plan.leads.map((l) => l.stop.id)).not.toContain('CC3')
+  })
+
+  it('discovers bundled 200A stop 16021 on Monday 00:20 across two 00:14 stops without widening service days', () => {
+    const inventory = parseStopInventory(
+      readFileSync('public/data/stops.tsv', 'utf8'),
+    )
+    const bus = parseBusNetworkTsv(
+      readFileSync('public/data/bus-network.tsv', 'utf8'),
+    )
+    const fullNetwork = buildTransitNetworkIndex({
+      inventory,
+      networkDate: bus.networkDate,
+      busServices: bus.busServices,
+      busFirstLast: bus.busFirstLast,
+    })
+    const stop16041 = inventory.stops.find((s) => s.id === '16041')
+    if (!stop16041) {
+      throw new Error('Missing stop 16041')
+    }
+    const plan = planBackwardLeads({
+      inventory,
+      networkIndex: {
+        ...fullNetwork,
+        patterns: fullNetwork.patterns.filter((p) => p.serviceId === '200A'),
+        transfers: [],
+      },
+      workplace: {
+        kind: 'postal',
+        postalCode: '119000',
+        label: '16041',
+        point: stop16041.point,
+      },
+      constraints: {
+        searchDate: '2026-11-30',
+        officeStart: '00:20',
+        rideCapMinutes: 15,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+
+    const leadIds = plan.leads.map((l) => l.stop.id)
+    expect(leadIds).toContain('16031')
+    expect(leadIds).toContain('16021')
+    // 11181 is 23:58 on Sunday (before midnight) and must not bleed into Monday
+    expect(leadIds).not.toContain('11181')
+  })
+
+  it('preserves ride-cost and boarding-time correlation instead of splicing early cost onto later departure', () => {
+    const uxdInventory: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: [
+        {
+          id: 'U',
+          kind: 'bus',
+          name: 'Stop U',
+          point: { latitude: 1.3, longitude: 103.7 },
+        },
+        {
+          id: 'X',
+          kind: 'bus',
+          name: 'Stop X',
+          point: { latitude: 1.35, longitude: 103.8 },
+        },
+        {
+          id: 'D',
+          kind: 'bus',
+          name: 'Stop D',
+          point: { latitude: 1.4, longitude: 103.9 },
+        },
+      ],
+    }
+    const workplaceD: Workplace = {
+      kind: 'postal',
+      postalCode: '820000',
+      label: 'Stop D',
+      point: { latitude: 1.4, longitude: 103.9 },
+    }
+    const xdCheapEarly: TransitPattern = {
+      patternId: 'xd-cheap-early',
+      serviceId: 'XD1',
+      serviceName: 'XD1',
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: 'X',
+          toStopId: 'D',
+          minRideMs: 5 * 60_000,
+          estRideMs: 5 * 60_000,
+          operatingWindows: { weekday: { firstMin: 520, lastMin: 520 } }, // 08:40
+        },
+      ],
+    }
+    const xdSlowLate: TransitPattern = {
+      patternId: 'xd-slow-late',
+      serviceId: 'XD2',
+      serviceName: 'XD2',
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: 'X',
+          toStopId: 'D',
+          minRideMs: 10 * 60_000,
+          estRideMs: 10 * 60_000,
+          operatingWindows: { weekday: { firstMin: 529, lastMin: 529 } }, // 08:49
+        },
+      ],
+    }
+    const uxLeg: TransitPattern = {
+      patternId: 'ux-leg',
+      serviceId: 'UX1',
+      serviceName: 'UX1',
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: 'U',
+          toStopId: 'X',
+          minRideMs: 3 * 60_000,
+          estRideMs: 3 * 60_000,
+          operatingWindows: { weekday: { firstMin: 525, lastMin: 525 } }, // 08:45
+        },
+      ],
+    }
+
+    for (const patterns of [
+      [xdCheapEarly, xdSlowLate, uxLeg],
+      [xdSlowLate, xdCheapEarly, uxLeg],
+    ]) {
+      const network: TransitNetworkIndex = {
+        version: 1,
+        networkDate: SEARCH_DATE,
+        inventoryDate: INVENTORY.inventoryDate,
+        provenance: [],
+        coveredStopIds: ['U', 'X', 'D'],
+        transfers: [],
+        patterns,
+      }
+      const capped12 = planBackwardLeads({
+        inventory: uxdInventory,
+        networkIndex: network,
+        workplace: workplaceD,
+        constraints: {
+          searchDate: SEARCH_DATE,
+          officeStart: '09:00',
+          rideCapMinutes: 12,
+        },
+        maxTransfers: 1,
+      })
+      expect(capped12.leads.map((l) => l.stop.id)).toEqual(['X'])
+
+      const capped13 = planBackwardLeads({
+        inventory: uxdInventory,
+        networkIndex: network,
+        workplace: workplaceD,
+        constraints: {
+          searchDate: SEARCH_DATE,
+          officeStart: '09:00',
+          rideCapMinutes: 13,
+        },
+        maxTransfers: 1,
+      })
+      const uLead = capped13.leads.find((l) => l.stop.id === 'U')
+      expect(uLead?.minRideMs).toBe(13 * 60_000)
+    }
+  })
+
+  it('propagates estimate-only improvements upstream regardless of pattern order', () => {
+    const uxdInventory: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: [
+        {
+          id: 'U',
+          kind: 'bus',
+          name: 'Stop U',
+          point: { latitude: 1.3, longitude: 103.7 },
+        },
+        {
+          id: 'X',
+          kind: 'bus',
+          name: 'Stop X',
+          point: { latitude: 1.35, longitude: 103.8 },
+        },
+        {
+          id: 'D',
+          kind: 'bus',
+          name: 'Stop D',
+          point: { latitude: 1.4, longitude: 103.9 },
+        },
+      ],
+    }
+    const workplaceD: Workplace = {
+      kind: 'postal',
+      postalCode: '820000',
+      label: 'Stop D',
+      point: { latitude: 1.4, longitude: 103.9 },
+    }
+    const slowerXd: TransitPattern = {
+      patternId: 'xd-slower-est',
+      serviceId: 'XD1',
+      serviceName: 'XD1',
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: 'X',
+          toStopId: 'D',
+          minRideMs: 5 * 60_000,
+          estRideMs: 5 * 60_000 + 50_000,
+          operatingWindows: { weekday: { firstMin: 530, lastMin: 530 } }, // 08:50
+        },
+      ],
+    }
+    const fasterXd: TransitPattern = {
+      patternId: 'xd-faster-est',
+      serviceId: 'XD2',
+      serviceName: 'XD2',
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: 'X',
+          toStopId: 'D',
+          minRideMs: 5 * 60_000,
+          estRideMs: 5 * 60_000 + 10_000,
+          operatingWindows: { weekday: { firstMin: 530, lastMin: 530 } }, // 08:50
+        },
+      ],
+    }
+    const uxPattern: TransitPattern = {
+      patternId: 'ux-open',
+      serviceId: 'UX1',
+      serviceName: 'UX1',
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: 'U',
+          toStopId: 'X',
+          minRideMs: 4 * 60_000,
+          estRideMs: 4 * 60_000 + 30_000,
+        },
+      ],
+    }
+
+    for (const patterns of [
+      [slowerXd, fasterXd, uxPattern],
+      [fasterXd, slowerXd, uxPattern],
+    ]) {
+      const plan = planBackwardLeads({
+        inventory: uxdInventory,
+        networkIndex: {
+          version: 1,
+          networkDate: SEARCH_DATE,
+          inventoryDate: INVENTORY.inventoryDate,
+          provenance: [],
+          coveredStopIds: ['U', 'X', 'D'],
+          transfers: [],
+          patterns,
+        },
+        workplace: workplaceD,
+        constraints: {
+          searchDate: SEARCH_DATE,
+          officeStart: '09:00',
+          rideCapMinutes: 10,
+        },
+        maxTransfers: 1,
+        maxProbesPerStop: 4,
+      })
+
+      const uLead = plan.leads.find((l) => l.stop.id === 'U')
+      expect(uLead?.estRideMs).toBe(9 * 60_000 + 40_000)
+      expect(uLead?.candidateDepartures).toHaveLength(4)
+    }
+  })
+
+  it('allocates probes across disjoint feasible intervals even when windows are under 30 minutes apart', () => {
+    const uxdInventory: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: [
+        {
+          id: 'U',
+          kind: 'bus',
+          name: 'Stop U',
+          point: { latitude: 1.3, longitude: 103.7 },
+        },
+        {
+          id: 'X',
+          kind: 'bus',
+          name: 'Stop X',
+          point: { latitude: 1.35, longitude: 103.8 },
+        },
+        {
+          id: 'D',
+          kind: 'bus',
+          name: 'Stop D',
+          point: { latitude: 1.4, longitude: 103.9 },
+        },
+      ],
+    }
+    const network: TransitNetworkIndex = {
+      version: 1,
+      networkDate: SEARCH_DATE,
+      inventoryDate: INVENTORY.inventoryDate,
+      provenance: [],
+      coveredStopIds: ['U', 'X', 'D'],
+      transfers: [],
+      patterns: [
+        {
+          patternId: 'xd-0850',
+          serviceId: 'XD',
+          serviceName: 'XD',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'X',
+              toStopId: 'D',
+              minRideMs: 5 * 60_000,
+              estRideMs: 5 * 60_000,
+              operatingWindows: { weekday: { firstMin: 530, lastMin: 530 } }, // 08:50
+            },
+          ],
+        },
+        {
+          patternId: 'ux-0800',
+          serviceId: 'UX_EARLY',
+          serviceName: 'UX_EARLY',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'U',
+              toStopId: 'X',
+              minRideMs: 5 * 60_000,
+              estRideMs: 5 * 60_000,
+              operatingWindows: { weekday: { firstMin: 480, lastMin: 480 } }, // 08:00
+            },
+          ],
+        },
+        {
+          patternId: 'ux-0825',
+          serviceId: 'UX_LATE',
+          serviceName: 'UX_LATE',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'U',
+              toStopId: 'X',
+              minRideMs: 5 * 60_000,
+              estRideMs: 5 * 60_000,
+              operatingWindows: { weekday: { firstMin: 505, lastMin: 505 } }, // 08:25
+            },
+          ],
+        },
+      ],
+    }
+
+    const plan = planBackwardLeads({
+      inventory: uxdInventory,
+      networkIndex: network,
+      workplace: {
+        kind: 'postal',
+        postalCode: '820000',
+        label: 'Stop D',
+        point: { latitude: 1.4, longitude: 103.9 },
+      },
+      constraints: CONSTRAINTS,
+      maxTransfers: 1,
+      maxProbesPerStop: 4,
+    })
+
+    const uLead = plan.leads.find((l) => l.stop.id === 'U')
+    expect(uLead).toBeDefined()
+    expect(uLead?.candidateDepartures.length).toBeLessThanOrEqual(4)
+    expect(
+      uLead?.candidateDepartures.some(
+        (c) => c >= '07:55:00' && c <= '08:00:59',
+      ),
+    ).toBe(true)
+    expect(
+      uLead?.candidateDepartures.some(
+        (c) => c >= '08:20:00' && c <= '08:25:59',
+      ),
+    ).toBe(true)
+  })
+
+  it('carries Circle Line loop through CC4 in both directions with zero transfers', () => {
+    const inventory = parseStopInventory(
+      readFileSync('public/data/stops.tsv', 'utf8'),
+    )
+    const bus = parseBusNetworkTsv(
+      readFileSync('public/data/bus-network.tsv', 'utf8'),
+    )
+    const fullNetwork = buildTransitNetworkIndex({
+      inventory,
+      networkDate: bus.networkDate,
+      busServices: bus.busServices,
+      busFirstLast: bus.busFirstLast,
+    })
+    const ccOnlyNetwork: TransitNetworkIndex = {
+      ...fullNetwork,
+      patterns: fullNetwork.patterns.filter(
+        (p) => p.serviceId === 'CC' || p.serviceId === 'CC_LOOP',
+      ),
+      transfers: [],
+    }
+    const cc5 = inventory.stops.find((s) => s.id === 'CC5')
+    const cc34 = inventory.stops.find((s) => s.id === 'CC34')
+    if (!cc5 || !cc34) {
+      throw new Error('Missing CC5 or CC34')
+    }
+
+    const toCc5 = planBackwardLeads({
+      inventory,
+      networkIndex: ccOnlyNetwork,
+      workplace: {
+        kind: 'station',
+        stationId: 'CC5',
+        label: 'CC5 Nicoll Highway',
+        point: cc5.point,
+      },
+      constraints: {
+        searchDate: '2026-11-26',
+        officeStart: '09:00',
+        rideCapMinutes: 15,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+    const cc34Lead = toCc5.leads.find((l) => l.stop.id === 'CC34')
+    expect(cc34Lead?.transfers).toBe(0)
+    expect(cc34Lead?.minRideMs).toBeGreaterThan(120_000)
+
+    const toCc34 = planBackwardLeads({
+      inventory,
+      networkIndex: ccOnlyNetwork,
+      workplace: {
+        kind: 'station',
+        stationId: 'CC34',
+        label: 'CC34 Bayfront',
+        point: cc34.point,
+      },
+      constraints: {
+        searchDate: '2026-11-26',
+        officeStart: '09:00',
+        rideCapMinutes: 15,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+    const cc5Lead = toCc34.leads.find((l) => l.stop.id === 'CC5')
+    expect(cc5Lead?.transfers).toBe(0)
+    expect(cc5Lead?.minRideMs).toBeGreaterThan(120_000)
+  })
+
+  it('models Circle Line spur peak through-service vs off-peak/weekend shuttle at Promenade', () => {
+    const inventory = parseStopInventory(
+      readFileSync('public/data/stops.tsv', 'utf8'),
+    )
+    const bus = parseBusNetworkTsv(
+      readFileSync('public/data/bus-network.tsv', 'utf8'),
+    )
+    const fullNetwork = buildTransitNetworkIndex({
+      inventory,
+      networkDate: bus.networkDate,
+      busServices: bus.busServices,
+      busFirstLast: bus.busFirstLast,
+    })
+    const ccOnlyNetwork: TransitNetworkIndex = {
+      ...fullNetwork,
+      patterns: fullNetwork.patterns.filter(
+        (p) => p.serviceId === 'CC' || p.serviceId === 'CC_LOOP',
+      ),
+      transfers: [],
+    }
+    const cc8 = inventory.stops.find((s) => s.id === 'CC8')
+    const cc32 = inventory.stops.find((s) => s.id === 'CC32')
+    const cc34 = inventory.stops.find((s) => s.id === 'CC34')
+    if (!cc8 || !cc32 || !cc34) {
+      throw new Error('Missing CC8, CC32, or CC34')
+    }
+
+    const cc8Workplace: Workplace = {
+      kind: 'station',
+      stationId: 'CC8',
+      label: 'CC8 Dakota',
+      point: cc8.point,
+    }
+
+    // Off-peak weekday: CC3 -> CC8 requires a transfer (not a direct spur ride)
+    const offPeakDirect = planBackwardLeads({
+      inventory,
+      networkIndex: ccOnlyNetwork,
+      workplace: cc8Workplace,
+      constraints: {
+        searchDate: '2026-11-26',
+        officeStart: '14:00',
+        rideCapMinutes: 20,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+    expect(offPeakDirect.leads.map((l) => l.stop.id)).not.toContain('CC3')
+
+    const offPeakTransfer = planBackwardLeads({
+      inventory,
+      networkIndex: ccOnlyNetwork,
+      workplace: cc8Workplace,
+      constraints: {
+        searchDate: '2026-11-26',
+        officeStart: '14:00',
+        rideCapMinutes: 20,
+      },
+      maxTransfers: 1,
+      maxFinalWalkMeters: 0,
+    })
+    expect(
+      offPeakTransfer.leads.find((l) => l.stop.id === 'CC3')?.transfers,
+    ).toBe(1)
+
+    // Weekend: CC3 -> CC8 also requires a transfer
+    const sundayDirect = planBackwardLeads({
+      inventory,
+      networkIndex: ccOnlyNetwork,
+      workplace: cc8Workplace,
+      constraints: {
+        searchDate: '2026-11-29',
+        officeStart: '09:00',
+        rideCapMinutes: 20,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+    expect(sundayDirect.leads.map((l) => l.stop.id)).not.toContain('CC3')
+
+    // Weekday AM and PM peaks: CC3 -> CC8 is a direct spur ride
+    for (const officeStart of ['09:00', '18:30']) {
+      const peakDirect = planBackwardLeads({
+        inventory,
+        networkIndex: ccOnlyNetwork,
+        workplace: cc8Workplace,
+        constraints: {
+          searchDate: '2026-11-26',
+          officeStart,
+          rideCapMinutes: 20,
+        },
+        maxTransfers: 0,
+        maxFinalWalkMeters: 0,
+      })
+      expect(peakDirect.leads.find((l) => l.stop.id === 'CC3')?.transfers).toBe(
+        0,
+      )
+    }
+
+    // Weekday peak spur serves CC1 <-> CC32 via CC4->CC5->Bishan, never CC1 -> CC34 direct
+    const cc1ToCc32 = planBackwardLeads({
+      inventory,
+      networkIndex: ccOnlyNetwork,
+      workplace: {
+        kind: 'station',
+        stationId: 'CC32',
+        label: 'CC32 Prince Edward Road',
+        point: cc32.point,
+      },
+      constraints: {
+        searchDate: '2026-11-26',
+        officeStart: '09:00',
+        rideCapMinutes: 60,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+    expect(cc1ToCc32.leads.find((l) => l.stop.id === 'CC1')?.transfers).toBe(0)
+
+    const cc1ToCc34 = planBackwardLeads({
+      inventory,
+      networkIndex: ccOnlyNetwork,
+      workplace: {
+        kind: 'station',
+        stationId: 'CC34',
+        label: 'CC34 Bayfront',
+        point: cc34.point,
+      },
+      constraints: {
+        searchDate: '2026-11-26',
+        officeStart: '09:00',
+        rideCapMinutes: 60,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+    expect(cc1ToCc34.leads.map((l) => l.stop.id)).not.toContain('CC1')
   })
 })

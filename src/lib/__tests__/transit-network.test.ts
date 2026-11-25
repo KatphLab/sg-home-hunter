@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import type { StopInventory } from '@lib/commute-types.js'
+import { parseStopInventory } from '@lib/inventory.js'
 import {
   buildTransitNetworkIndex,
   getServiceDayType,
@@ -558,5 +559,65 @@ describe('transit-network', () => {
     expect(parsed.networkDate).toBe(
       parseBusNetworkDate('2026-11-06T02:05:26.522Z', '2026-11-25'),
     )
+  })
+
+  it('models Circle Line off-peak shuttle (CC1-CC6), weekday peak spur (CC1-CC32), and closed CC_LOOP (CC4-CC34-CC4)', () => {
+    const inventory = parseStopInventory(
+      readFileSync('public/data/stops.tsv', 'utf8'),
+    )
+    const index = buildTransitNetworkIndex({
+      inventory,
+      networkDate: '2026-11-26',
+      busServices: {},
+      busFirstLast: {},
+    })
+
+    const shuttle = index.patterns.filter((p) =>
+      p.patternId.startsWith('rail:CC:shuttle:'),
+    )
+    const peakSpur = index.patterns.filter((p) =>
+      p.patternId.startsWith('rail:CC:peak:'),
+    )
+    const loop = index.patterns.filter((p) => p.serviceId === 'CC_LOOP')
+
+    expect(shuttle).toHaveLength(2)
+    expect(peakSpur).toHaveLength(2)
+    expect(loop).toHaveLength(2)
+
+    const shuttleStops = new Set(
+      shuttle.flatMap((p) =>
+        p.segments.flatMap((s) => [s.fromStopId, s.toStopId]),
+      ),
+    )
+    expect(shuttleStops).toEqual(
+      new Set(['CC1', 'CC2', 'CC3', 'CC4', 'CC5', 'CC6']),
+    )
+
+    const peakStops = new Set(
+      peakSpur.flatMap((p) =>
+        p.segments.flatMap((s) => [s.fromStopId, s.toStopId]),
+      ),
+    )
+    expect(peakStops.has('CC1')).toBe(true)
+    expect(peakStops.has('CC32')).toBe(true)
+    expect(peakStops.has('CC33')).toBe(false)
+    expect(peakStops.has('CC34')).toBe(false)
+    expect(peakSpur[0]?.segments[0]?.operatingWindows).toEqual({
+      weekday: [
+        { firstMin: 337, lastMin: 555 },
+        { firstMin: 1005, lastMin: 1225 },
+      ],
+    })
+
+    for (const pattern of loop) {
+      expect(pattern.isLoop).toBe(true)
+      const loopStops = new Set(
+        pattern.segments.flatMap((s) => [s.fromStopId, s.toStopId]),
+      )
+      expect(loopStops.has('CC4')).toBe(true)
+      expect(loopStops.has('CC34')).toBe(true)
+      expect(loopStops.has('CC1')).toBe(false)
+      expect(loopStops.has('CC3')).toBe(false)
+    }
   })
 })

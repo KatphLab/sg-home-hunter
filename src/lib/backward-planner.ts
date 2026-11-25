@@ -11,9 +11,11 @@ import {
   parseSingaporeDateTimeMs,
 } from '@lib/singapore-calendar.js'
 import {
+  type DayOperatingWindows,
   type DayType,
   getServiceDayType,
   haversineDistanceMeters,
+  type OperatingWindow,
   type TransferLink,
   type TransitNetworkIndex,
   type TransitPattern,
@@ -82,111 +84,175 @@ interface PlannerContext {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value))
 
-const CLOCK_BUCKET_MS = 600_000
-const RIDE_BUCKET_MS = 60_000
-const DISTINCT_WINDOW_GAP_MS = 30 * 60_000
+const MINUTE_END_OFFSET_MS = 59_999
 
-type BucketedLabels = Map<number, BackwardLabel[]>
-type StopFrontier = Map<string, BucketedLabels>
+type StopFrontier = Map<string, BackwardLabel[]>
 
 const isWithinSearchDay = (ms: number, ctx: PlannerContext): boolean =>
   ms >= ctx.dayStartMs && ms < ctx.dayEndMs
 
-const isBucketDominated = (
-  candidate: BackwardLabel,
+const getDominanceEstRideMs = (
+  label: BackwardLabel,
+  rideCapMs: number,
+): number => (label.estRideMs > rideCapMs ? rideCapMs + 1 : label.estRideMs)
+
+const dominatesLabel = (
   existing: BackwardLabel,
+  candidate: BackwardLabel,
+  rideCapMs: number,
+  ignoreEarliest: boolean,
 ): boolean =>
   existing.transfers <= candidate.transfers &&
-  Math.floor(existing.minRideMs / RIDE_BUCKET_MS) <=
-    Math.floor(candidate.minRideMs / RIDE_BUCKET_MS) &&
-  Math.floor(existing.estRideMs / RIDE_BUCKET_MS) <=
-    Math.floor(candidate.estRideMs / RIDE_BUCKET_MS)
+  existing.minRideMs <= candidate.minRideMs &&
+  getDominanceEstRideMs(existing, rideCapMs) <=
+    getDominanceEstRideMs(candidate, rideCapMs) &&
+  existing.latestClockMs >= candidate.latestClockMs &&
+  (ignoreEarliest || existing.earliestClockMs <= candidate.earliestClockMs)
 
-const mergeLabelEnvelope = (
-  base: BackwardLabel,
-  other: BackwardLabel,
-): BackwardLabel | null => {
-  const minRideMs = Math.min(base.minRideMs, other.minRideMs)
-  const estRideMs = Math.min(base.estRideMs, other.estRideMs)
-  const earliestClockMs = Math.min(base.earliestClockMs, other.earliestClockMs)
-  const latestClockMs = Math.max(base.latestClockMs, other.latestClockMs)
-  if (
-    minRideMs === base.minRideMs &&
-    estRideMs === base.estRideMs &&
-    earliestClockMs === base.earliestClockMs &&
-    latestClockMs === base.latestClockMs
-  ) {
-    return null
+const findDominanceInsertPoint = (
+  list: readonly BackwardLabel[],
+  label: BackwardLabel,
+  rideCapMs: number,
+  ignoreEarliest: boolean,
+): { readonly insertPos: number; readonly startEvict: number } | null => {
+  let i = 0
+  let firstEq = -1
+  while (i < list.length) {
+    const ex = list[i]
+    if (!ex || ex.minRideMs > label.minRideMs) {
+      break
+    }
+    if (firstEq === -1 && ex.minRideMs === label.minRideMs) {
+      firstEq = i
+    }
+    if (dominatesLabel(ex, label, rideCapMs, ignoreEarliest)) {
+      return null
+    }
+    i += 1
   }
-  return { ...base, minRideMs, estRideMs, earliestClockMs, latestClockMs }
+  return { insertPos: i, startEvict: firstEq !== -1 ? firstEq : i }
 }
 
-const absorbIntoExistingLabel = (
-  list: BackwardLabel[],
-  index: number,
-  existing: BackwardLabel,
-  incoming: BackwardLabel,
-): BackwardLabel | null => {
-  const merged = mergeLabelEnvelope(existing, incoming)
-  if (!merged) {
-    return null
-  }
-  list[index] = merged
-  const needsPropagate =
-    merged.minRideMs < existing.minRideMs ||
-    merged.earliestClockMs < existing.earliestClockMs ||
-    merged.latestClockMs > existing.latestClockMs
-  return needsPropagate ? merged : null
-}
-
-const insertIntoBucketList = (
+const insertSortedLabel = (
   list: BackwardLabel[],
   label: BackwardLabel,
+  rideCapMs: number,
+  ignoreEarliest: boolean,
 ): BackwardLabel | null => {
-  for (let i = 0; i < list.length; i += 1) {
-    const existing = list[i]
-    if (existing && isBucketDominated(label, existing)) {
-      return absorbIntoExistingLabel(list, i, existing, label)
+  const point = findDominanceInsertPoint(list, label, rideCapMs, ignoreEarliest)
+  if (!point) {
+    return null
+  }
+  let { insertPos } = point
+  let writeIdx = point.startEvict
+  for (let j = point.startEvict; j < list.length; j += 1) {
+    const ex = list[j]
+    if (!ex) {
+      continue
+    }
+    if (dominatesLabel(label, ex, rideCapMs, ignoreEarliest)) {
+      if (j < insertPos) {
+        insertPos -= 1
+      }
+      continue
+    }
+    list[writeIdx] = ex
+    writeIdx += 1
+  }
+  list.length = writeIdx
+  list.push(label)
+  for (let k = writeIdx; k > insertPos; k -= 1) {
+    const prev = list[k - 1]
+    if (prev) {
+      list[k] = prev
     }
   }
-  let writeIdx = 0
-  let inserted = label
-  for (const item of list) {
-    if (isBucketDominated(item, label)) {
-      inserted = mergeLabelEnvelope(inserted, item) ?? inserted
-    } else {
-      list[writeIdx] = item
+  list[insertPos] = label
+  return label
+}
+
+const pushMonotonicLabel = (
+  out: BackwardLabel[],
+  label: BackwardLabel,
+  rideCapMs: number,
+): void => {
+  for (const ex of out) {
+    if (dominatesLabel(ex, label, rideCapMs, false)) {
+      return
+    }
+  }
+  let tailStart = out.length
+  while (tailStart > 0 && out[tailStart - 1]?.minRideMs === label.minRideMs) {
+    tailStart -= 1
+  }
+  let writeIdx = tailStart
+  for (let j = tailStart; j < out.length; j += 1) {
+    const ex = out[j]
+    if (ex && !dominatesLabel(label, ex, rideCapMs, false)) {
+      out[writeIdx] = ex
       writeIdx += 1
     }
   }
-  list.length = writeIdx
-  list.push(inserted)
-  return inserted
+  out.length = writeIdx
+  out.push(label)
 }
 
-const insertIntoBuckets = (
-  buckets: BucketedLabels,
-  label: BackwardLabel,
-): BackwardLabel | null => {
-  const bucket = Math.floor(label.estClockMs / CLOCK_BUCKET_MS)
-  const list = buckets.get(bucket)
-  if (!list) {
-    buckets.set(bucket, [label])
-    return label
+const appendSortedTail = (
+  out: BackwardLabel[],
+  source: readonly BackwardLabel[],
+  startIdx: number,
+  maxMinRideMs: number,
+  rideCapMs: number,
+): void => {
+  for (let i = startIdx; i < source.length; i += 1) {
+    const item = source[i]
+    if (!item || item.minRideMs > maxMinRideMs) {
+      break
+    }
+    pushMonotonicLabel(out, item, rideCapMs)
   }
-  return insertIntoBucketList(list, label)
+}
+
+const mergeSortedBags = (
+  bag: readonly BackwardLabel[],
+  entering: readonly BackwardLabel[],
+  maxMinRideMs: number,
+  rideCapMs: number,
+): BackwardLabel[] => {
+  const out: BackwardLabel[] = []
+  let ia = 0
+  let ib = 0
+  while (ia < bag.length && ib < entering.length) {
+    const a = bag[ia]
+    const b = entering[ib]
+    if (!a || !b || a.minRideMs > maxMinRideMs || b.minRideMs > maxMinRideMs) {
+      break
+    }
+    if (a.minRideMs <= b.minRideMs) {
+      pushMonotonicLabel(out, a, rideCapMs)
+      ia += 1
+    } else {
+      pushMonotonicLabel(out, b, rideCapMs)
+      ib += 1
+    }
+  }
+  appendSortedTail(out, bag, ia, maxMinRideMs, rideCapMs)
+  appendSortedTail(out, entering, ib, maxMinRideMs, rideCapMs)
+  return out
 }
 
 const insertFrontierLabel = (
   frontier: StopFrontier,
   label: BackwardLabel,
+  rideCapMs: number,
+  ignoreEarliest = false,
 ): BackwardLabel | null => {
-  let buckets = frontier.get(label.stopId)
-  if (!buckets) {
-    buckets = new Map()
-    frontier.set(label.stopId, buckets)
+  const list = frontier.get(label.stopId)
+  if (!list) {
+    frontier.set(label.stopId, [label])
+    return label
   }
-  return insertIntoBuckets(buckets, label)
+  return insertSortedLabel(list, label, rideCapMs, ignoreEarliest)
 }
 
 const computeFinalWalkBounds = (
@@ -268,7 +334,7 @@ const seedFinalWalkLabels = (
   for (const stop of inventory.stops) {
     const label = createSeedLabel(stop, workplace, ctx, maxFinalWalkMeters)
     if (label) {
-      insertFrontierLabel(seeds, label)
+      insertFrontierLabel(seeds, label, ctx.rideCapMs)
     }
   }
   return seeds
@@ -279,33 +345,77 @@ interface OperatingIntervalMs {
   readonly endMs: number
 }
 
+const normalizeDayWindows = (
+  raw: DayOperatingWindows | undefined,
+): readonly OperatingWindow[] => {
+  if (raw === undefined) {
+    return []
+  }
+  return 'firstMin' in raw ? [raw] : raw
+}
+
+const appendServiceDayIntervals = (
+  intervals: OperatingIntervalMs[],
+  windows: DayOperatingWindows | undefined,
+  fromPreviousDay: boolean,
+  ctx: PlannerContext,
+): void => {
+  for (const op of normalizeDayWindows(windows)) {
+    const eligible = fromPreviousDay ? op.lastMin >= 1440 : op.firstMin < 1440
+    if (!eligible) {
+      continue
+    }
+    const dayShiftMin = fromPreviousDay ? -1440 : 0
+    const startMs = Math.max(
+      ctx.dayStartMs,
+      ctx.dayStartMs + (op.firstMin + dayShiftMin) * 60_000,
+    )
+    const endMs = Math.min(
+      ctx.dayEndMs - 1,
+      ctx.dayStartMs +
+        (op.lastMin + dayShiftMin) * 60_000 +
+        MINUTE_END_OFFSET_MS,
+    )
+    if (endMs >= startMs) {
+      intervals.push({ startMs, endMs })
+    }
+  }
+}
+
 const getOperatingIntervalsForDate = (
   seg: TransitSegment,
   ctx: PlannerContext,
 ): readonly OperatingIntervalMs[] => {
   if (seg.operatingWindows === undefined) {
-    return [{ startMs: ctx.dayStartMs, endMs: ctx.dayEndMs }]
+    return [{ startMs: ctx.dayStartMs, endMs: ctx.dayEndMs - 1 }]
   }
   const intervals: OperatingIntervalMs[] = []
-  const prevOp = seg.operatingWindows[ctx.prevDayType]
-  if (prevOp !== undefined && prevOp.lastMin >= 1440) {
-    const startMs = Math.max(
-      ctx.dayStartMs,
-      ctx.dayStartMs + (prevOp.firstMin - 1440) * 60_000,
-    )
-    const endMs = ctx.dayStartMs + (prevOp.lastMin - 1440) * 60_000
-    if (endMs >= startMs) {
-      intervals.push({ startMs, endMs })
-    }
-  }
-  const op = seg.operatingWindows[ctx.dayType]
-  if (op !== undefined && op.firstMin < 1440) {
-    intervals.push({
-      startMs: ctx.dayStartMs + op.firstMin * 60_000,
-      endMs: ctx.dayStartMs + op.lastMin * 60_000,
-    })
-  }
+  appendServiceDayIntervals(
+    intervals,
+    seg.operatingWindows[ctx.prevDayType],
+    true,
+    ctx,
+  )
+  appendServiceDayIntervals(
+    intervals,
+    seg.operatingWindows[ctx.dayType],
+    false,
+    ctx,
+  )
   return intervals
+}
+
+const appendSteppedBagLabel = (
+  nextBag: BackwardLabel[],
+  stepped: BackwardLabel,
+  singleInterval: boolean,
+  rideCapMs: number,
+): void => {
+  if (singleInterval) {
+    pushMonotonicLabel(nextBag, stepped, rideCapMs)
+  } else {
+    insertSortedLabel(nextBag, stepped, rideCapMs, false)
+  }
 }
 
 const stepLabelAcrossSegment = (
@@ -314,7 +424,7 @@ const stepLabelAcrossSegment = (
   round: number,
   intervals: readonly OperatingIntervalMs[],
   ctx: PlannerContext,
-  nextBag: BucketedLabels,
+  nextBag: BackwardLabel[] | null,
   tracker: FrontierTracker,
 ): void => {
   const nextMinRide = label.minRideMs + seg.minRideMs
@@ -322,6 +432,7 @@ const stepLabelAcrossSegment = (
     return
   }
   const maxStepMs = Math.max(seg.estRideMs, seg.minRideMs)
+  const singleInterval = intervals.length === 1
   for (const { startMs, endMs } of intervals) {
     const nextLatest = Math.min(label.latestClockMs - seg.minRideMs, endMs)
     const nextEarliest = Math.max(
@@ -345,8 +456,10 @@ const stepLabelAcrossSegment = (
       ),
       transfers: round,
     }
-    insertIntoBuckets(nextBag, stepped)
-    recordUpdatedLabel(stepped, tracker)
+    if (nextBag) {
+      appendSteppedBagLabel(nextBag, stepped, singleInterval, ctx.rideCapMs)
+    }
+    recordUpdatedLabel(stepped, tracker, ctx.rideCapMs)
   }
 }
 
@@ -358,53 +471,111 @@ interface FrontierTracker {
 const recordUpdatedLabel = (
   label: BackwardLabel,
   tracker: FrontierTracker,
+  rideCapMs: number,
 ): void => {
-  const recorded = insertFrontierLabel(tracker.boardedFrontiers, label)
+  const recorded = insertFrontierLabel(
+    tracker.boardedFrontiers,
+    label,
+    rideCapMs,
+    false,
+  )
   if (recorded && tracker.updatedStops) {
-    insertFrontierLabel(tracker.updatedStops, recorded)
-  }
-}
-
-const mergeEnteringLabels = (
-  bag: BucketedLabels,
-  entering: BucketedLabels | undefined,
-): void => {
-  if (!entering) {
-    return
-  }
-  for (const list of entering.values()) {
-    for (const label of list) {
-      insertIntoBuckets(bag, label)
-    }
+    insertFrontierLabel(tracker.updatedStops, recorded, rideCapMs, true)
   }
 }
 
 const stepBagAcrossSegment = (
-  bag: BucketedLabels,
+  bag: readonly BackwardLabel[],
   seg: TransitSegment,
+  round: number,
+  needNextBag: boolean,
+  tracker: FrontierTracker,
+  ctx: PlannerContext,
+): BackwardLabel[] => {
+  const intervals = getOperatingIntervalsForDate(seg, ctx)
+  if (intervals.length === 0) {
+    return []
+  }
+  const nextBag: BackwardLabel[] | null = needNextBag ? [] : null
+  for (const label of bag) {
+    if (label.minRideMs + seg.minRideMs > ctx.rideCapMs) {
+      break
+    }
+    stepLabelAcrossSegment(label, seg, round, intervals, ctx, nextBag, tracker)
+  }
+  return nextBag ?? []
+}
+
+const prepareSegmentBag = (
+  bag: BackwardLabel[],
+  seg: TransitSegment,
+  prevFromStopId: string | undefined,
+  roundInput: StopFrontier,
+  ctx: PlannerContext,
+): BackwardLabel[] => {
+  const activeBag =
+    prevFromStopId !== undefined && seg.toStopId !== prevFromStopId ? [] : bag
+  const maxInputMinRide = ctx.rideCapMs - seg.minRideMs
+  if (maxInputMinRide < 0) {
+    return []
+  }
+  const entering = roundInput.get(seg.toStopId)
+  return entering
+    ? mergeSortedBags(activeBag, entering, maxInputMinRide, ctx.rideCapMs)
+    : activeBag
+}
+
+const relaxPatternPass = (
+  pattern: TransitPattern,
+  round: number,
+  roundInput: StopFrontier,
+  tracker: FrontierTracker,
+  ctx: PlannerContext,
+): {
+  readonly bag: BackwardLabel[]
+  readonly prevFromStopId: string | undefined
+} => {
+  let bag: BackwardLabel[] = []
+  let prevFromStopId: string | undefined
+  for (let i = pattern.segments.length - 1; i >= 0; i -= 1) {
+    const seg = pattern.segments[i]
+    if (!seg) {
+      continue
+    }
+    bag = prepareSegmentBag(bag, seg, prevFromStopId, roundInput, ctx)
+    prevFromStopId = seg.fromStopId
+    if (bag.length === 0) {
+      continue
+    }
+    const needNextBag =
+      i > 0
+        ? pattern.segments[i - 1]?.toStopId === seg.fromStopId
+        : Boolean(pattern.isLoop)
+    bag = stepBagAcrossSegment(bag, seg, round, needNextBag, tracker, ctx)
+  }
+  return { bag, prevFromStopId }
+}
+
+const relaxLoopWrapPass = (
+  pattern: TransitPattern,
+  initialBag: BackwardLabel[],
+  initialPrevFromStopId: string | undefined,
   round: number,
   tracker: FrontierTracker,
   ctx: PlannerContext,
-): BucketedLabels => {
-  const nextBag: BucketedLabels = new Map()
-  const intervals = getOperatingIntervalsForDate(seg, ctx)
-  if (intervals.length === 0) {
-    return nextBag
-  }
-  for (const list of bag.values()) {
-    for (const label of list) {
-      stepLabelAcrossSegment(
-        label,
-        seg,
-        round,
-        intervals,
-        ctx,
-        nextBag,
-        tracker,
-      )
+): void => {
+  let bag = initialBag
+  let prevFromStopId = initialPrevFromStopId
+  for (let i = pattern.segments.length - 1; i >= 1 && bag.length > 0; i -= 1) {
+    const seg = pattern.segments[i]
+    if (!seg || seg.toStopId !== prevFromStopId) {
+      break
     }
+    prevFromStopId = seg.fromStopId
+    const needNextBag =
+      i > 1 && pattern.segments[i - 1]?.toStopId === seg.fromStopId
+    bag = stepBagAcrossSegment(bag, seg, round, needNextBag, tracker, ctx)
   }
-  return nextBag
 }
 
 const relaxEstimatedPattern = (
@@ -414,22 +585,15 @@ const relaxEstimatedPattern = (
   tracker: FrontierTracker,
   ctx: PlannerContext,
 ): void => {
-  let bag: BucketedLabels = new Map()
-  let prevFromStopId: string | undefined
-  for (let i = pattern.segments.length - 1; i >= 0; i -= 1) {
-    const seg = pattern.segments[i]
-    if (!seg) {
-      continue
-    }
-    if (prevFromStopId !== undefined && seg.toStopId !== prevFromStopId) {
-      bag = new Map()
-    }
-    prevFromStopId = seg.fromStopId
-    mergeEnteringLabels(bag, roundInput.get(seg.toStopId))
-    if (bag.size === 0) {
-      continue
-    }
-    bag = stepBagAcrossSegment(bag, seg, round, tracker, ctx)
+  const { bag, prevFromStopId } = relaxPatternPass(
+    pattern,
+    round,
+    roundInput,
+    tracker,
+    ctx,
+  )
+  if (pattern.isLoop && bag.length > 0 && pattern.segments.length >= 2) {
+    relaxLoopWrapPass(pattern, bag, prevFromStopId, round, tracker, ctx)
   }
 }
 
@@ -478,13 +642,19 @@ const addShiftedTransfer = (
   shifted: BackwardLabel | null,
   transferFrontiers: StopFrontier,
   nextInput: StopFrontier,
+  rideCapMs: number,
 ): void => {
   if (!shifted) {
     return
   }
-  const recorded = insertFrontierLabel(transferFrontiers, shifted)
+  const recorded = insertFrontierLabel(
+    transferFrontiers,
+    shifted,
+    rideCapMs,
+    true,
+  )
   if (recorded) {
-    insertFrontierLabel(nextInput, recorded)
+    insertFrontierLabel(nextInput, recorded, rideCapMs, true)
   }
 }
 
@@ -508,6 +678,7 @@ const propagateTransfersForLabel = (
     ),
     transferFrontiers,
     nextInput,
+    ctx.rideCapMs,
   )
   for (const link of links) {
     addShiftedTransfer(
@@ -522,6 +693,7 @@ const propagateTransfersForLabel = (
       ),
       transferFrontiers,
       nextInput,
+      ctx.rideCapMs,
     )
   }
 }
@@ -534,19 +706,17 @@ const propagateTransfers = (
   ctx: PlannerContext,
 ): StopFrontier => {
   const nextInput: StopFrontier = new Map()
-  for (const [toStopId, buckets] of updatedStops.entries()) {
+  for (const [toStopId, labels] of updatedStops.entries()) {
     const links = incomingTransfers.get(toStopId) ?? []
-    for (const list of buckets.values()) {
-      for (const label of list) {
-        propagateTransfersForLabel(
-          label,
-          links,
-          nextRound,
-          transferFrontiers,
-          nextInput,
-          ctx,
-        )
-      }
+    for (const label of labels) {
+      propagateTransfersForLabel(
+        label,
+        links,
+        nextRound,
+        transferFrontiers,
+        nextInput,
+        ctx,
+      )
     }
   }
   return nextInput
@@ -571,6 +741,9 @@ const orderLabelsForProbe = (
     return b.estClockMs - a.estClockMs
   })
 
+const areIntervalsDisjoint = (a: BackwardLabel, b: BackwardLabel): boolean =>
+  a.latestClockMs < b.earliestClockMs || b.latestClockMs < a.earliestClockMs
+
 const selectDistinctWindowAnchors = (
   ordered: readonly BackwardLabel[],
   rideCapMs: number,
@@ -590,13 +763,7 @@ const selectDistinctWindowAnchors = (
     if (!label || (primaryEstOk && label.estRideMs > rideCapMs)) {
       continue
     }
-    if (
-      anchors.every(
-        (anchor) =>
-          Math.abs(label.estClockMs - anchor.estClockMs) >=
-          DISTINCT_WINDOW_GAP_MS,
-      )
-    ) {
+    if (anchors.every((anchor) => areIntervalsDisjoint(label, anchor))) {
       anchors.push(label)
     }
   }
@@ -652,23 +819,28 @@ const buildCandidateDepartures = (
     ctx.rideCapMs,
     maxProbesPerStop,
   )
+  const bracketPlans = anchors.map((anchor) =>
+    getBracketAnchorAndOffsets(anchor, ctx),
+  )
   const uniqueClocks: string[] = []
-  for (const anchor of anchors) {
-    const { anchorMs } = getBracketAnchorAndOffsets(anchor, ctx)
-    pushUniqueProbeClock(uniqueClocks, anchorMs, ctx, maxProbesPerStop)
+  for (const plan of bracketPlans) {
+    pushUniqueProbeClock(uniqueClocks, plan.anchorMs, ctx, maxProbesPerStop)
   }
-  for (const anchor of anchors) {
+  const maxOffsets = bracketPlans[0]?.offsets.length ?? 0
+  for (let offsetIdx = 0; offsetIdx < maxOffsets; offsetIdx += 1) {
     if (uniqueClocks.length >= maxProbesPerStop) {
       break
     }
-    const { anchorMs, offsets } = getBracketAnchorAndOffsets(anchor, ctx)
-    for (const offset of offsets) {
-      pushUniqueProbeClock(
-        uniqueClocks,
-        anchorMs + offset,
-        ctx,
-        maxProbesPerStop,
-      )
+    for (const plan of bracketPlans) {
+      const offset = plan.offsets[offsetIdx]
+      if (offset !== undefined) {
+        pushUniqueProbeClock(
+          uniqueClocks,
+          plan.anchorMs + offset,
+          ctx,
+          maxProbesPerStop,
+        )
+      }
     }
   }
   return uniqueClocks
@@ -735,16 +907,15 @@ const buildSortedLeads = (
 ): readonly BackwardLead[] => {
   const stopsById = new Map(inventory.stops.map((s) => [s.id, s]))
   const leads: BackwardLead[] = []
-  for (const [stopId, buckets] of boardedFrontiers.entries()) {
+  for (const [stopId, labels] of boardedFrontiers.entries()) {
     const stop = stopsById.get(stopId)
     if (
       !stop ||
       isDestinationStationMatch(stop, workplace) ||
-      buckets.size === 0
+      labels.length === 0
     ) {
       continue
     }
-    const labels = [...buckets.values()].flat()
     const lead = summarizeLead(stop, labels, ctx, maxProbesPerStop)
     if (lead) {
       leads.push(lead)

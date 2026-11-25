@@ -11,6 +11,8 @@ const DEFAULT_MAX_TRANSFER_WALK_M = 450
 const SAME_COMPLEX_RAIL_M = 150
 const GRID_CELL_DEG = 0.0045
 const RAIL_DEFAULT_WINDOW: OperatingWindow = { firstMin: 330, lastMin: 1435 }
+const CC_SHUTTLE_MAX_STATION = 6
+const CC_PEAK_SPUR_MAX_STATION = 32
 const MRT_HEADWAY_MS = 240_000
 const LRT_HEADWAY_MS = 300_000
 const BUS_HEADWAY_MS = 720_000
@@ -34,9 +36,30 @@ interface NetworkProvenance {
   readonly timingKind: 'first_last_estimated'
 }
 
-interface OperatingWindow {
+export interface OperatingWindow {
   readonly firstMin: number
   readonly lastMin: number
+}
+
+export type DayOperatingWindows = OperatingWindow | readonly OperatingWindow[]
+
+const RAIL_ALL_DAY_WINDOWS: Readonly<
+  Partial<Record<DayType, DayOperatingWindows>>
+> = {
+  weekday: RAIL_DEFAULT_WINDOW,
+  saturday: RAIL_DEFAULT_WINDOW,
+  sunday_holiday: RAIL_DEFAULT_WINDOW,
+}
+
+// Published LTA / Land Transport Guru CCL spur schedule:
+// weekday peak Dhoby Ghaut <-> Prince Edward Rd (05:37 first CC32 train, AM 05:45-09:15, PM 16:45-20:25).
+const CC_PEAK_SPUR_WINDOWS: Readonly<
+  Partial<Record<DayType, DayOperatingWindows>>
+> = {
+  weekday: [
+    { firstMin: 337, lastMin: 555 },
+    { firstMin: 1005, lastMin: 1225 },
+  ],
 }
 
 export interface TransitSegment {
@@ -45,7 +68,7 @@ export interface TransitSegment {
   readonly minRideMs: number
   readonly estRideMs: number
   readonly operatingWindows?: Readonly<
-    Partial<Record<DayType, OperatingWindow>>
+    Partial<Record<DayType, DayOperatingWindows>>
   >
 }
 
@@ -55,6 +78,7 @@ export interface TransitPattern {
   readonly serviceName: string
   readonly mode: TransitMode
   readonly headwayMs: number
+  readonly isLoop?: boolean
   readonly segments: readonly TransitSegment[]
 }
 
@@ -617,40 +641,54 @@ const collectByPrefix = (railStops: readonly Stop[], prefix: string): Stop[] =>
     })
     .sort((a, b) => parseStationNumber(a.id) - parseStationNumber(b.id))
 
+interface RailPatternOptions {
+  readonly patternPrefix?: string
+  readonly operatingWindows?: Readonly<
+    Partial<Record<DayType, DayOperatingWindows>>
+  >
+  readonly isLoop?: boolean
+}
+
+const buildRailSegment = (
+  fromStop: Stop,
+  toStop: Stop,
+  isLrt: boolean,
+  operatingWindows: Readonly<Partial<Record<DayType, DayOperatingWindows>>>,
+): TransitSegment => {
+  const distM = haversineDistanceMeters(fromStop.point, toStop.point)
+  const minRideMs = isLrt
+    ? Math.max(50_000, Math.round((distM / 10) * 1000 + 25_000))
+    : Math.max(75_000, Math.round((distM / 15) * 1000 + 35_000))
+  const estRideMs = isLrt
+    ? Math.max(minRideMs, Math.round((distM / 7.5) * 1000 + 35_000))
+    : Math.max(minRideMs, Math.round((distM / 12.5) * 1000 + 50_000))
+  return {
+    fromStopId: fromStop.id,
+    toStopId: toStop.id,
+    minRideMs,
+    estRideMs,
+    operatingWindows,
+  }
+}
+
 const makeRailPattern = (
   patternId: string,
   serviceId: string,
   orderedStops: readonly Stop[],
   isLrt: boolean,
+  options?: RailPatternOptions,
 ): TransitPattern | null => {
   if (orderedStops.length < 2) {
     return null
   }
+  const operatingWindows = options?.operatingWindows ?? RAIL_ALL_DAY_WINDOWS
   const segments: TransitSegment[] = []
   for (let i = 0; i < orderedStops.length - 1; i += 1) {
     const fromStop = orderedStops[i]
     const toStop = orderedStops[i + 1]
-    if (!fromStop || !toStop) {
-      continue
+    if (fromStop && toStop) {
+      segments.push(buildRailSegment(fromStop, toStop, isLrt, operatingWindows))
     }
-    const distM = haversineDistanceMeters(fromStop.point, toStop.point)
-    const minRideMs = isLrt
-      ? Math.max(50_000, Math.round((distM / 10) * 1000 + 25_000))
-      : Math.max(75_000, Math.round((distM / 15) * 1000 + 35_000))
-    const estRideMs = isLrt
-      ? Math.max(minRideMs, Math.round((distM / 7.5) * 1000 + 35_000))
-      : Math.max(minRideMs, Math.round((distM / 12.5) * 1000 + 50_000))
-    segments.push({
-      fromStopId: fromStop.id,
-      toStopId: toStop.id,
-      minRideMs,
-      estRideMs,
-      operatingWindows: {
-        weekday: RAIL_DEFAULT_WINDOW,
-        saturday: RAIL_DEFAULT_WINDOW,
-        sunday_holiday: RAIL_DEFAULT_WINDOW,
-      },
-    })
   }
   if (segments.length === 0) {
     return null
@@ -661,6 +699,7 @@ const makeRailPattern = (
     serviceName: serviceId,
     mode: isLrt ? 'TRAM' : 'SUBWAY',
     headwayMs: isLrt ? LRT_HEADWAY_MS : MRT_HEADWAY_MS,
+    ...(options?.isLoop ? { isLoop: true } : {}),
     segments,
   }
 }
@@ -670,16 +709,19 @@ const pushBidirectionalRail = (
   serviceId: string,
   stops: readonly Stop[],
   isLrt: boolean,
+  options?: RailPatternOptions,
 ): void => {
-  const fwd = makeRailPattern(`rail:${serviceId}:fwd`, serviceId, stops, isLrt)
+  const prefix = options?.patternPrefix ?? `rail:${serviceId}`
+  const fwd = makeRailPattern(`${prefix}:fwd`, serviceId, stops, isLrt, options)
   if (fwd) {
     patterns.push(fwd)
   }
   const rev = makeRailPattern(
-    `rail:${serviceId}:rev`,
+    `${prefix}:rev`,
     serviceId,
     [...stops].reverse(),
     isLrt,
+    options,
   )
   if (rev) {
     patterns.push(rev)
@@ -721,14 +763,31 @@ const pushStemAndLoopRail = (
   }
 }
 
-const pushBranchAndLoopRail = (
+const pushCircleLinePatterns = (
   patterns: TransitPattern[],
   serviceId: string,
   orderedStops: readonly Stop[],
   hubStationId: string,
   isLrt: boolean,
 ): void => {
-  pushBidirectionalRail(patterns, serviceId, orderedStops, isLrt)
+  const shuttleStops = orderedStops.filter(
+    (s) => parseStationNumber(s.id) <= CC_SHUTTLE_MAX_STATION,
+  )
+  pushBidirectionalRail(patterns, serviceId, shuttleStops, isLrt, {
+    patternPrefix: `rail:${serviceId}:shuttle`,
+    operatingWindows: RAIL_ALL_DAY_WINDOWS,
+  })
+
+  const peakStops = orderedStops.filter(
+    (s) => parseStationNumber(s.id) <= CC_PEAK_SPUR_MAX_STATION,
+  )
+  if (peakStops.length > shuttleStops.length) {
+    pushBidirectionalRail(patterns, serviceId, peakStops, isLrt, {
+      patternPrefix: `rail:${serviceId}:peak`,
+      operatingWindows: CC_PEAK_SPUR_WINDOWS,
+    })
+  }
+
   const hubIndex = orderedStops.findIndex((s) => s.id === hubStationId)
   const hub = hubIndex >= 0 ? orderedStops[hubIndex] : undefined
   if (!hub || orderedStops.length <= hubIndex + 1) {
@@ -740,6 +799,7 @@ const pushBranchAndLoopRail = (
     `${serviceId}_LOOP`,
     [hub, ...loopTail, hub],
     isLrt,
+    { operatingWindows: RAIL_ALL_DAY_WINDOWS, isLoop: true },
   )
 }
 
@@ -790,7 +850,7 @@ const buildRailTopologyPatterns = (
     )
   }
 
-  pushBranchAndLoopRail(
+  pushCircleLinePatterns(
     patterns,
     'CC',
     collectByPrefix(railStops, 'CC'),
