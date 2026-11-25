@@ -1,3 +1,4 @@
+import { runBackwardCommuteSearch } from '@lib/backward-search.js'
 import type {
   CompletedSearchSnapshot,
   OneMapAccount,
@@ -15,12 +16,9 @@ import {
   signInToOneMap,
 } from '@lib/onemap-client.js'
 import { saveCompletedResult } from '@lib/saved-result-store.js'
-import {
-  runCommuteSearch,
-  type SearchProgress,
-  type SearchRunResult,
-} from '@lib/search-scheduler.js'
+import type { SearchProgress, SearchRunResult } from '@lib/search-scheduler.js'
 import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
+import type { TransitNetworkIndex } from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'
 import {
   type AppElements,
@@ -38,6 +36,7 @@ import type { CommuteMapView } from './map-view.js'
 
 export interface AppState {
   inventory: StopInventory | null
+  networkIndex: TransitNetworkIndex | null
   account: OneMapAccount | null
   workplace: Workplace | null
   matches: readonly QualifiedStop[]
@@ -61,6 +60,7 @@ export const syncConnectivity = (ctx: AppContext): void => {
     online &&
     state.account !== null &&
     state.inventory !== null &&
+    state.networkIndex !== null &&
     !state.isSearching
   renderConnectivityState(els, online, canStart)
 }
@@ -259,7 +259,12 @@ export const stopActiveSearch = (ctx: AppContext): void => {
 
 export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   const { els, mapView, state } = ctx
-  if (!state.inventory || !state.account || state.isSearching) {
+  if (
+    !state.inventory ||
+    !state.networkIndex ||
+    !state.account ||
+    state.isSearching
+  ) {
     return
   }
   renderInlineError(els.searchError, null)
@@ -322,10 +327,12 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
 
   const constraints = { searchDate, officeStart, rideCapMinutes }
   const account = state.account
-  const result = await runCommuteSearch({
+  const result = await runBackwardCommuteSearch({
     inventory: state.inventory,
+    networkIndex: state.networkIndex,
     workplace,
     constraints,
+    probeUncoveredStops: true,
     signal: controller.signal,
     routeStop: async (stop, departureTimeHHMMSS, signal) => {
       const plan = await fetchTransitPlan({

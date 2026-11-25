@@ -121,6 +121,159 @@ export interface ParsedFirstLastEntry {
   readonly windows: Readonly<Partial<Record<DayType, OperatingWindow>>>
 }
 
+export interface ParsedBusNetworkData {
+  readonly networkDate: string
+  readonly busServices: Readonly<Record<string, BusRouterServiceEntry>>
+  readonly busFirstLast: Readonly<Record<string, readonly string[]>>
+}
+
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+const sanitizeTsvToken = (raw: string): string =>
+  raw.replace(/[\t\r\n]+/g, ' ').trim()
+
+const appendServiceLines = (
+  lines: string[],
+  busServices: Readonly<Record<string, BusRouterServiceEntry>>,
+): void => {
+  const serviceIds = Object.keys(busServices).sort((a, b) => a.localeCompare(b))
+  for (const serviceId of serviceIds) {
+    const cleanId = sanitizeTsvToken(serviceId)
+    const entry = busServices[serviceId]
+    if (!entry || cleanId.length === 0) {
+      continue
+    }
+    for (const route of entry.routes) {
+      const cleanedRoute = route.map(sanitizeTsvToken).filter(Boolean)
+      if (cleanedRoute.length >= 2) {
+        lines.push(`R\t${cleanId}\t${cleanedRoute.join(',')}`)
+      }
+    }
+  }
+}
+
+const appendFirstLastLines = (
+  lines: string[],
+  busFirstLast: Readonly<Record<string, readonly string[]>>,
+): void => {
+  const stopIds = Object.keys(busFirstLast).sort((a, b) => a.localeCompare(b))
+  for (const stopId of stopIds) {
+    const cleanStopId = sanitizeTsvToken(stopId)
+    const entries = (busFirstLast[stopId] ?? [])
+      .map((item) => item.replace(/[|\t\r\n]+/g, ' ').trim())
+      .filter(Boolean)
+    if (cleanStopId.length > 0 && entries.length > 0) {
+      lines.push(`F\t${cleanStopId}\t${entries.join('|')}`)
+    }
+  }
+}
+
+/** Serialize dated BusRouter services and first/last timings into a compact TSV. */
+export const serializeBusNetworkTsv = (input: ParsedBusNetworkData): string => {
+  if (!ISO_DATE_PATTERN.test(input.networkDate)) {
+    throw new Error(`Invalid bus network date: ${input.networkDate}`)
+  }
+  const lines = [`networkDate\t${input.networkDate}`, 'kind\tid\tpayload']
+  appendServiceLines(lines, input.busServices)
+  appendFirstLastLines(lines, input.busFirstLast)
+  return `${lines.join('\n')}\n`
+}
+
+const parseNetworkHeader = (lines: readonly string[]): string => {
+  if (lines.length < 2) {
+    throw new Error('Bus network TSV is missing required headers')
+  }
+  const metaParts = (lines[0] ?? '').split('\t')
+  const networkDate = metaParts[1] ?? ''
+  if (metaParts[0] !== 'networkDate' || !ISO_DATE_PATTERN.test(networkDate)) {
+    throw new Error('Bus network TSV missing valid networkDate header')
+  }
+  if (lines[1] !== 'kind\tid\tpayload') {
+    throw new Error('Bus network TSV column header mismatch')
+  }
+  return networkDate
+}
+
+const parseRoutePayload = (
+  serviceId: string,
+  payload: string,
+  routesByService: Map<string, string[][]>,
+): void => {
+  const stops = payload
+    .split(',')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+  if (stops.length < 2) {
+    return
+  }
+  const existing = routesByService.get(serviceId) ?? []
+  existing.push(stops)
+  routesByService.set(serviceId, existing)
+}
+
+const parseFirstLastPayload = (
+  stopId: string,
+  payload: string,
+  busFirstLast: Record<string, string[]>,
+): void => {
+  const entries = payload
+    .split('|')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+  if (entries.length === 0) {
+    return
+  }
+  const existing = busFirstLast[stopId]
+  if (existing) {
+    existing.push(...entries)
+  } else {
+    busFirstLast[stopId] = entries
+  }
+}
+
+const applyNetworkRow = (
+  line: string,
+  routesByService: Map<string, string[][]>,
+  busFirstLast: Record<string, string[]>,
+): void => {
+  const parts = line.split('\t')
+  if (parts.length !== 3) {
+    return
+  }
+  const kind = parts[0] ?? ''
+  const id = (parts[1] ?? '').trim()
+  const payload = (parts[2] ?? '').trim()
+  if (id.length === 0 || payload.length === 0) {
+    return
+  }
+  if (kind === 'R') {
+    parseRoutePayload(id, payload, routesByService)
+  } else if (kind === 'F') {
+    parseFirstLastPayload(id, payload, busFirstLast)
+  }
+}
+
+/** Parse a compact bus-network TSV produced by `serializeBusNetworkTsv`. */
+export const parseBusNetworkTsv = (rawTsv: string): ParsedBusNetworkData => {
+  const lines = rawTsv
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  const networkDate = parseNetworkHeader(lines)
+
+  const routesByService = new Map<string, string[][]>()
+  const busFirstLast: Record<string, string[]> = {}
+  for (let index = 2; index < lines.length; index += 1) {
+    applyNetworkRow(lines[index] ?? '', routesByService, busFirstLast)
+  }
+
+  const busServices: Record<string, BusRouterServiceEntry> = {}
+  for (const [serviceId, routes] of routesByService.entries()) {
+    busServices[serviceId] = { name: serviceId, routes }
+  }
+  return { networkDate, busServices, busFirstLast }
+}
+
 const toRadians = (deg: number): number => (deg * Math.PI) / 180
 
 /** Compute straight-line distance in meters between two WGS84 points. */

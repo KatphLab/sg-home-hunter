@@ -1,6 +1,10 @@
 import { filterRailStations, parseStopInventory } from '@lib/inventory.js'
 import { loadCompletedResult } from '@lib/saved-result-store.js'
 import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
+import {
+  buildTransitNetworkIndex,
+  parseBusNetworkTsv,
+} from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'
 import {
   collectAppElements,
@@ -94,6 +98,7 @@ const bootstrap = async (): Promise<void> => {
   const els = collectAppElements()
   const state: AppState = {
     inventory: null,
+    networkIndex: null,
     account: null,
     workplace: null,
     matches: [],
@@ -126,12 +131,30 @@ const bootstrap = async (): Promise<void> => {
   }
 
   try {
-    const response = await fetch('./data/stops.tsv')
-    if (!response.ok) {
-      throw new Error(`HTTP ${String(response.status)}`)
+    const [stopsResponse, networkResponse] = await Promise.all([
+      fetch('./data/stops.tsv'),
+      fetch('./data/bus-network.tsv'),
+    ])
+    if (!stopsResponse.ok) {
+      throw new Error(`stops.tsv HTTP ${String(stopsResponse.status)}`)
     }
-    const inventory = parseStopInventory(await response.text())
+    if (!networkResponse.ok) {
+      throw new Error(`bus-network.tsv HTTP ${String(networkResponse.status)}`)
+    }
+    const [stopsText, networkText] = await Promise.all([
+      stopsResponse.text(),
+      networkResponse.text(),
+    ])
+    const inventory = parseStopInventory(stopsText)
+    const busNetwork = parseBusNetworkTsv(networkText)
+    const networkIndex = buildTransitNetworkIndex({
+      inventory,
+      networkDate: busNetwork.networkDate,
+      busServices: busNetwork.busServices,
+      busFirstLast: busNetwork.busFirstLast,
+    })
     state.inventory = inventory
+    state.networkIndex = networkIndex
     renderInventorySummary(els, inventory, getDefaultSearchDate(Date.now()))
     renderStationOptions(
       els.stationSelect,

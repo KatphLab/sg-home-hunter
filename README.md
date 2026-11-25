@@ -6,7 +6,7 @@ House Hunter is an installable, client-only PWA for finding Singapore neighbourh
 
 - **Direct OneMap browser sign-in:** Connects with your own OneMap email and password directly from the browser (no backend proxy or shared token; passwords are never stored or logged).
 - **Workplace & search rules:** Supports 6-digit Singapore postal codes (preserving leading zeros) or exact line-specific MRT/LRT stations, defaults the search date to the next non-holiday Singapore workday (including observed Sunday-to-Monday public holidays), enforces an inclusive 15-minute arrival window (`[officeStart - 15m, officeStart]`), and separates in-vehicle ride time from walking and transfers.
-- **Island-wide search:** Each OneMap itinerary can prove journeys from multiple boarding stops, including transfers. A timed intermediate stop is only a lead: after the island-wide pass, the app can check its departure directly with OneMap. Unconfirmed stops stay in the normal search. “Stops tried” counts distinct stops checked or proven, not API requests.
+- **Island-wide search:** Builds an in-browser transit network from bundled [`public/data/stops.tsv`](public/data/stops.tsv) and [`public/data/bus-network.tsv`](public/data/bus-network.tsv), plans backward from the workplace to prune unreachable stops before querying OneMap, probes targeted departure times, reuses confirmed transfer boardings, and verifies timed intermediate leads directly with OneMap. Uncovered stops fall back to the standard departure schedule. “Stops tried” counts distinct stops checked or proven, not API requests.
 - **Offline viewing:** Service Worker (`src/sw.ts`) caches the PWA shell and bundled inventory, while `localStorage` retains only the last **completed** search (workplace, 500 m zone over an offline Singapore coastline layer, stop/journey details, original date, start time, and ride cap) without requiring sign-in or overwriting when a later search stops early.
 
 ## Getting started
@@ -23,7 +23,7 @@ Open `http://127.0.0.1:3000/` in a browser (set `PORT=4173` to override). All PW
 
 ## Project layout
 
-- `public/`: Source static assets (`index.html`, `styles.css`, `data/stops.tsv`).
+- `public/`: Source static assets (`index.html`, `styles.css`, `data/stops.tsv`, `data/bus-network.tsv`).
 - `dist/public/`: Runnable built output produced by `bun run build:pwa` (copies `public/` plus bundled scripts and vendor assets such as `leaflet.css`; run static asset audits such as `impeccable detect` against `dist/public/`).
 - `src/**/__tests__/*.test.ts`: Unit tests executed by Bun (`bun run test:ci`).
 - `e2e/*.test.ts`: Browser acceptance tests executed by Playwright (`bun run test:e2e`, which builds and serves `dist/public/`).
@@ -36,7 +36,7 @@ Open `http://127.0.0.1:3000/` in a browser (set `PORT=4173` to override). All PW
 | `bun run build:pwa`          | Bundle browser TypeScript/Service Worker and copy `public/` + `leaflet.css` to `dist/public/`                                |
 | `bun run build`              | Typecheck, build PWA assets, and bundle the Bun static server into `dist/`                                                   |
 | `bun run start`              | Serve `dist/public/` via `dist/index.js`                                                                                     |
-| `bun run inventory:refresh`  | Refresh `public/data/stops.tsv` from BusRouter SG and SGRailData                                                             |
+| `bun run inventory:refresh`  | Refresh `public/data/stops.tsv` and `public/data/bus-network.tsv` from BusRouter SG and SGRailData                           |
 | `bun run benchmark:backward` | Run live (`--mode live`) or credential-free replay (`--mode replay`) benchmarks for the standalone backward-search prototype |
 | `bun run lint`               | Biome formatting, linting, accessibility, and import checks; warnings fail                                                   |
 | `bun run fix`                | Apply Biome fixes, then Knip fixes                                                                                           |
@@ -64,5 +64,10 @@ Configure these under **Settings → Secrets and variables → Actions** (pre-cr
 ## Runtime dependencies
 
 - [`leaflet`](https://leafletjs.com/) (`BSD-2-Clause`): Interactive map rendering, uniform-opacity SVG pane for 500 m catchment unions, offline GeoJSON coastline layer, and OneMap tile integration.
+
+## Data attribution
+
+- Bundled bus stops, service routes, and first/last bus timings (`public/data/stops.tsv`, `public/data/bus-network.tsv`) incorporate data from **Land Transport Authority (LTA) DataMall**, accessed via [BusRouter SG](https://data.busrouter.sg/), and are used under the terms of the [Singapore Open Data Licence v1.0](https://www.lta.gov.sg/content/ltagov/en/footer/data-gov-sg-terms-of-use.html).
+- MRT and LRT station codes and coordinates incorporate data from [cheeaun/sgraildata](https://github.com/cheeaun/sgraildata).
 
 See [AGENTS.md](AGENTS.md) for contributor instructions and [CODING_STANDARDS.md](CODING_STANDARDS.md) for architecture and review standards.

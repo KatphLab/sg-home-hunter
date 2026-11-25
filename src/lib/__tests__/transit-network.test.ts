@@ -4,8 +4,10 @@ import {
   buildTransitNetworkIndex,
   getServiceDayType,
   haversineDistanceMeters,
+  parseBusNetworkTsv,
   parseBusRouterFirstLastLine,
   parseGtfsTrainSchedule,
+  serializeBusNetworkTsv,
 } from '@lib/transit-network.js'
 
 const MINI_INVENTORY: StopInventory = {
@@ -278,5 +280,85 @@ describe('transit-network', () => {
     ).toBe(true)
     expect(index.coveredStopIds).toContain('NE18')
     expect(index.coveredStopIds).toContain('65729')
+  })
+
+  it('serializes and parses compact bus-network TSVs and integrates with transit network index', () => {
+    const rawTsv = serializeBusNetworkTsv({
+      networkDate: '2026-11-25',
+      busServices: {
+        '381': {
+          name: '381',
+          routes: [
+            ['65009', '65729', '69009'],
+            ['69009', '65009'],
+          ],
+        },
+        SHORT: { name: 'SHORT', routes: [['65009']] },
+      },
+      busFirstLast: {
+        '65009': ['381 0545 0035 = = = =', '381 0700 0116 = = = ='],
+        '65729': ['381 0548 0038 = = = ='],
+      },
+    })
+
+    const parsed = parseBusNetworkTsv(rawTsv)
+    expect(parsed.networkDate).toBe('2026-11-25')
+    expect(parsed.busServices['381']).toEqual({
+      name: '381',
+      routes: [
+        ['65009', '65729', '69009'],
+        ['69009', '65009'],
+      ],
+    })
+    expect(parsed.busServices['SHORT']).toBeUndefined()
+    expect(parsed.busFirstLast['65009']).toEqual([
+      '381 0545 0035 = = = =',
+      '381 0700 0116 = = = =',
+    ])
+
+    const rebuilt = buildTransitNetworkIndex({
+      inventory: MINI_INVENTORY,
+      networkDate: parsed.networkDate,
+      busServices: parsed.busServices,
+      busFirstLast: parsed.busFirstLast,
+    })
+    expect(rebuilt.networkDate).toBe('2026-11-25')
+    expect(rebuilt.coveredStopIds).toContain('65729')
+  })
+
+  it('handles empty rail-only bus-network TSVs, ignores malformed rows, and rejects invalid headers', () => {
+    const validWithBadRows = [
+      'networkDate\t2026-11-25',
+      'kind\tid\tpayload',
+      'badrow',
+      'R\t\t65009,65729',
+      'R\t10\t65009',
+      'F\t65009\t|',
+      'F\t65009\t10 0530 2330 = = = =',
+      'F\t65009\t10 0600 2330 = = = =',
+    ].join('\n')
+    const parsed = parseBusNetworkTsv(validWithBadRows)
+    expect(parsed.busServices).toEqual({})
+    expect(parsed.busFirstLast['65009']).toEqual([
+      '10 0530 2330 = = = =',
+      '10 0600 2330 = = = =',
+    ])
+
+    expect(() =>
+      serializeBusNetworkTsv({
+        networkDate: 'bad',
+        busServices: {},
+        busFirstLast: {},
+      }),
+    ).toThrow('Invalid bus network date')
+    expect(() => parseBusNetworkTsv('only-one-line')).toThrow(
+      'missing required',
+    )
+    expect(() =>
+      parseBusNetworkTsv('networkDate\tinvalid\nkind\tid\tpayload'),
+    ).toThrow('networkDate header')
+    expect(() =>
+      parseBusNetworkTsv('networkDate\t2026-11-25\nwrong\theader\tcols'),
+    ).toThrow('column header mismatch')
   })
 })
