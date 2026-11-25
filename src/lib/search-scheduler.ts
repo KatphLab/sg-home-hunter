@@ -1,6 +1,6 @@
 import {
   createDestinationStationJourney,
-  findFirstQualifyingJourney,
+  evaluateBoardings,
   isDestinationStationMatch,
 } from '@lib/commute-rules.js'
 import type {
@@ -16,7 +16,10 @@ import {
   defaultDelay,
   OneMapAuthError,
 } from '@lib/onemap-client.js'
-import { parseClockMinutes } from '@lib/singapore-calendar.js'
+import {
+  formatSingaporeTime,
+  parseClockMinutes,
+} from '@lib/singapore-calendar.js'
 
 const DEFAULT_STEP_MINUTES = 10
 const DEFAULT_MIN_INTERVAL_MS = 120
@@ -69,7 +72,6 @@ export interface SearchProgress {
   readonly totalPasses: number
   readonly failedQueries: number
   readonly matches: readonly QualifiedStop[]
-  readonly latestMatch: QualifiedStop | null
 }
 
 export interface SearchRunResult {
@@ -101,6 +103,10 @@ export interface RunCommuteSearchOptions {
 interface SearchState {
   readonly triedSet: Set<string>
   readonly matchedMap: Map<string, QualifiedStop>
+  readonly stopsById: ReadonlyMap<string, Stop>
+  readonly hints: Map<Stop, string>
+  readonly hintedStops: Set<Stop>
+  readonly scheduledTimes: ReadonlySet<string>
   readonly totalCount: number
   readonly totalPasses: number
   readonly onProgress: (progress: SearchProgress) => void
@@ -109,11 +115,7 @@ interface SearchState {
   authExpired: boolean
 }
 
-const emitProgress = (
-  state: SearchState,
-  passNumber: number,
-  latestMatch: QualifiedStop | null,
-): void => {
+const emitProgress = (state: SearchState, passNumber: number): void => {
   state.onProgress({
     status: 'running',
     triedCount: state.triedSet.size,
@@ -123,7 +125,6 @@ const emitProgress = (
     totalPasses: state.totalPasses,
     failedQueries: state.failedQueries,
     matches: [...state.matchedMap.values()],
-    latestMatch,
   })
 }
 
@@ -132,9 +133,9 @@ const seedDestinationStation = (
   workplace: Workplace,
   constraints: SearchConstraints,
   state: SearchState,
-): QualifiedStop | null => {
+): void => {
   if (workplace.kind !== 'station') {
-    return null
+    return
   }
   for (const stop of inventory.stops) {
     if (isDestinationStationMatch(stop, workplace)) {
@@ -146,10 +147,9 @@ const seedDestinationStation = (
       const qualified: QualifiedStop = { stop, journey }
       state.triedSet.add(stop.id)
       state.matchedMap.set(stop.id, qualified)
-      return qualified
+      return
     }
   }
-  return null
 }
 
 const paceRequest = async (
@@ -179,6 +179,32 @@ const buildResult = (
   matches: [...state.matchedMap.values()],
 })
 
+const recordItinerary = (
+  raw: unknown,
+  constraints: SearchConstraints,
+  state: SearchState,
+): void => {
+  const { journeys, hints } = evaluateBoardings(constraints, raw)
+  for (const journey of journeys) {
+    const stop = state.stopsById.get(journey.stopId)
+    if (stop && !state.matchedMap.has(stop.id)) {
+      state.matchedMap.set(stop.id, { stop, journey })
+      state.triedSet.add(stop.id)
+    }
+  }
+  for (const { stopId, departureMs } of hints) {
+    const stop = state.stopsById.get(stopId)
+    if (!stop || state.matchedMap.has(stopId) || state.hintedStops.has(stop)) {
+      continue
+    }
+    const departure = formatSingaporeTime(departureMs, true)
+    if (!state.scheduledTimes.has(departure)) {
+      state.hintedStops.add(stop)
+      state.hints.set(stop, departure)
+    }
+  }
+}
+
 const probeStop = async (
   stop: Stop,
   departureTime: string,
@@ -204,16 +230,10 @@ const probeStop = async (
       options.signal,
     )
     state.triedSet.add(stop.id)
-    const journey = findFirstQualifyingJourney(
-      stop,
-      options.constraints,
-      itineraries,
-    )
-    const latestMatch = journey ? { stop, journey } : null
-    if (latestMatch) {
-      state.matchedMap.set(stop.id, latestMatch)
+    for (const itinerary of itineraries) {
+      recordItinerary(itinerary, options.constraints, state)
     }
-    emitProgress(state, passNumber, latestMatch)
+    emitProgress(state, passNumber)
     return 'ok'
   } catch (error) {
     if (error instanceof OneMapAuthError) {
@@ -225,7 +245,7 @@ const probeStop = async (
     }
     state.triedSet.add(stop.id)
     state.failedQueries += 1
-    emitProgress(state, passNumber, null)
+    emitProgress(state, passNumber)
     return 'ok'
   }
 }
@@ -236,7 +256,7 @@ const runSearchPass = async (
   options: RunCommuteSearchOptions,
   state: SearchState,
 ): Promise<'ok' | 'stop'> => {
-  emitProgress(state, passNumber, null)
+  emitProgress(state, passNumber)
   for (const stop of options.inventory.stops) {
     if (options.signal.aborted) {
       return 'stop'
@@ -255,6 +275,16 @@ const runSearchPass = async (
       return 'stop'
     }
   }
+  // Finish the island-wide pass before spending requests on timing hints.
+  for (const [stop, time] of state.hints) {
+    if (state.matchedMap.has(stop.id)) {
+      continue
+    }
+    if ((await probeStop(stop, time, passNumber, options, state)) === 'stop') {
+      return 'stop'
+    }
+  }
+  state.hints.clear()
   return 'ok'
 }
 
@@ -268,6 +298,10 @@ export const runCommuteSearch = async (
   const state: SearchState = {
     triedSet: new Set<string>(),
     matchedMap: new Map<string, QualifiedStop>(),
+    stopsById: new Map(options.inventory.stops.map((stop) => [stop.id, stop])),
+    hints: new Map(),
+    hintedStops: new Set(),
+    scheduledTimes: new Set(schedule),
     totalCount: options.inventory.stops.length,
     totalPasses: schedule.length,
     onProgress: options.onProgress,
@@ -276,13 +310,13 @@ export const runCommuteSearch = async (
     authExpired: false,
   }
 
-  const seeded = seedDestinationStation(
+  seedDestinationStation(
     options.inventory,
     options.workplace,
     options.constraints,
     state,
   )
-  emitProgress(state, 1, seeded)
+  emitProgress(state, 1)
 
   for (let passIdx = 0; passIdx < schedule.length; passIdx += 1) {
     const departureTime = schedule[passIdx] ?? '08:00:00'

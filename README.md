@@ -6,7 +6,7 @@ House Hunter is an installable, client-only PWA for finding Singapore neighbourh
 
 - **Direct OneMap browser sign-in:** Connects with your own OneMap email and password directly from the browser (no backend proxy or shared token; passwords are never stored or logged).
 - **Workplace & search rules:** Supports 6-digit Singapore postal codes (preserving leading zeros) or exact line-specific MRT/LRT stations, defaults the search date to the next non-holiday Singapore workday (including observed Sunday-to-Monday public holidays), enforces an inclusive 15-minute arrival window (`[officeStart - 15m, officeStart]`), and separates in-vehicle ride time from walking and transfers.
-- **Progressive breadth-first discovery:** Checks every candidate stop in the bundled dated inventory (`public/data/stops.tsv`) on pass 1 before revisiting unmatched stops, streaming 500 m union patches live onto a Leaflet map and an accessible synced stop list.
+- **Island-wide search:** Each OneMap itinerary can prove journeys from multiple boarding stops, including transfers. A timed intermediate stop is only a lead: after the island-wide pass, the app can check its departure directly with OneMap. Unconfirmed stops stay in the normal search. “Stops tried” counts distinct stops checked or proven, not API requests.
 - **Offline viewing:** Service Worker (`src/sw.ts`) caches the PWA shell and bundled inventory, while `localStorage` retains only the last **completed** search (workplace, 500 m zone over an offline Singapore coastline layer, stop/journey details, original date, start time, and ride cap) without requiring sign-in or overwriting when a later search stops early.
 
 ## Getting started

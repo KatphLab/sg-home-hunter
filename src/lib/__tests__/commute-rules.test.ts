@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import {
   createDestinationStationJourney,
-  evaluateItinerary,
-  findFirstQualifyingJourney,
+  evaluateBoardings,
   isDestinationStationMatch,
 } from '@lib/commute-rules.js'
 import type { SearchConstraints, Stop, Workplace } from '@lib/commute-types.js'
@@ -13,13 +12,6 @@ const CONSTRAINTS: SearchConstraints = {
   searchDate: SEARCH_DATE,
   officeStart: '09:00',
   rideCapMinutes: 30,
-}
-
-const STOP_BUS_66421: Stop = {
-  id: '66421',
-  kind: 'bus',
-  name: 'Blk 987C',
-  point: { latitude: 1.388, longitude: 103.89 },
 }
 
 const STOP_NS17: Stop = {
@@ -36,16 +28,10 @@ const STOP_CC15: Stop = {
   point: { latitude: 1.351_455, longitude: 103.848_263 },
 }
 
-const sgtMs = (clock: string, offsetMs = 0): number => {
-  const [hhMm = '00:00', secStr = '0'] = clock.split(':')
-  const parts = clock.split(':')
-  const base = parseSingaporeDateTimeMs(
-    SEARCH_DATE,
-    `${parts[0] ?? '00'}:${parts[1] ?? '00'}`,
-  )
-  const seconds = parts.length === 3 ? Number(parts[2] ?? secStr) : 0
-  return base + seconds * 1000 + offsetMs - (hhMm ? 0 : 0)
-}
+const sgtMs = (clock: string, offsetMs = 0): number =>
+  parseSingaporeDateTimeMs(SEARCH_DATE, clock.slice(0, 5)) +
+  Number(clock.slice(6) || 0) * 1000 +
+  offsetMs
 
 describe('station identity rules', () => {
   it('qualifies only exact destination station ID and not another line ID at same point', () => {
@@ -79,310 +65,279 @@ describe('station identity rules', () => {
   })
 })
 
-describe('itinerary qualification rules', () => {
-  it('qualifies a 28-min ride + 10-min transfer arriving at 08:58', () => {
-    const raw = {
-      startTime: sgtMs('08:20:00'),
-      endTime: sgtMs('08:58:00'),
-      walkLimitExceeded: false,
+const busLeg = (startTime: number, endTime: number, stopCode = '66421') => ({
+  mode: 'BUS',
+  startTime,
+  endTime,
+  from: { stopCode },
+  routeShortName: '116',
+})
+
+const singleRide = (startMs: number, rideMs: number, finalWalkMs = 0) => ({
+  startTime: startMs,
+  endTime: startMs + rideMs + finalWalkMs,
+  legs: [
+    busLeg(startMs, startMs + rideMs),
+    ...(finalWalkMs > 0
+      ? [
+          {
+            mode: 'WALK',
+            startTime: startMs + rideMs,
+            endTime: startMs + rideMs + finalWalkMs,
+          },
+        ]
+      : []),
+  ],
+})
+
+describe('boarding qualification rules', () => {
+  it('qualifies actual boarding origins with only their remaining ride and services', () => {
+    const result = evaluateBoardings(CONSTRAINTS, {
+      startTime: sgtMs('08:20'),
+      endTime: sgtMs('08:58'),
       legs: [
-        {
-          mode: 'BUS',
-          startTime: sgtMs('08:20:00'),
-          endTime: sgtMs('08:35:00'),
-          from: { stopCode: '66421' },
-          routeShortName: '116',
-          routeId: '116',
-        },
-        {
-          mode: 'WALK',
-          startTime: sgtMs('08:35:00'),
-          endTime: sgtMs('08:40:00'),
-          from: { stopCode: '65009' },
-        },
+        busLeg(sgtMs('08:20'), sgtMs('08:35')),
+        { mode: 'WALK', startTime: sgtMs('08:35'), endTime: sgtMs('08:40') },
         {
           mode: 'SUBWAY',
-          startTime: sgtMs('08:45:00'),
-          endTime: sgtMs('08:58:00'),
+          startTime: sgtMs('08:45'),
+          endTime: sgtMs('08:58'),
           from: { stopCode: 'NE17' },
           routeShortName: 'NE',
           routeId: 'NE',
         },
       ],
-    }
-
-    const journey = evaluateItinerary(STOP_BUS_66421, CONSTRAINTS, raw)
-    expect(journey).not.toBeNull()
-    expect(journey?.rideMs).toBe(28 * 60_000)
-    expect(journey?.boardingAtMs).toBe(sgtMs('08:20:00'))
-    expect(journey?.arrivalAtMs).toBe(sgtMs('08:58:00'))
-    expect(journey?.services).toEqual([
-      { id: '116', name: '116', mode: 'BUS' },
-      { id: 'NE', name: 'NE', mode: 'SUBWAY' },
+    })
+    expect(result.hints).toEqual([])
+    expect(result.journeys).toEqual([
+      {
+        stopId: '66421',
+        searchDate: SEARCH_DATE,
+        boardingAtMs: sgtMs('08:20'),
+        arrivalAtMs: sgtMs('08:58'),
+        rideMs: 28 * 60_000,
+        services: [
+          { id: '116', name: '116', mode: 'BUS' },
+          { id: 'NE', name: 'NE', mode: 'SUBWAY' },
+        ],
+        isAtDestination: false,
+      },
+      {
+        stopId: 'NE17',
+        searchDate: SEARCH_DATE,
+        boardingAtMs: sgtMs('08:45'),
+        arrivalAtMs: sgtMs('08:58'),
+        rideMs: 13 * 60_000,
+        services: [{ id: 'NE', name: 'NE', mode: 'SUBWAY' }],
+        isAtDestination: false,
+      },
     ])
   })
 
-  it('rejects a 12-min ride arriving at 08:44 (before arrival window)', () => {
-    const raw = {
-      startTime: sgtMs('08:32:00'),
-      endTime: sgtMs('08:44:00'),
-      legs: [
-        {
-          mode: 'BUS',
-          startTime: sgtMs('08:32:00'),
-          endTime: sgtMs('08:44:00'),
-          from: { stopCode: '66421' },
-          routeShortName: '116',
-        },
-      ],
-    }
+  it.each([
+    ['08:15', 1_800_000, 0, 0, true],
+    ['08:15', 1_800_000, 0, -1, false],
+    ['08:30', 1_800_000, 0, 0, true],
+    ['08:30', 1_800_000, 0, 1, false],
+    ['08:25', 1_800_001, 0, 0, false],
+    ['08:40', 1_000_000, 200_001, 0, false],
+    ['08:25', 1_000_000, 200_000, 0, true],
+    ['08:32', 720_000, 0, 0, false],
+  ] as const)(
+    'preserves millisecond arrival, final walk and ride limits (%s, %d, %d, %d)',
+    (clock, rideMs, walkMs, offsetMs, qualifies) => {
+      const result = evaluateBoardings(
+        CONSTRAINTS,
+        singleRide(sgtMs(clock, offsetMs), rideMs, walkMs),
+      )
+      expect(result.journeys.length).toBe(qualifies ? 1 : 0)
+    },
+  )
 
-    expect(evaluateItinerary(STOP_BUS_66421, CONSTRAINTS, raw)).toBeNull()
-  })
-
-  it('enforces inclusive arrival window and ride cap down to 1 millisecond', () => {
-    const makeSingleLeg = (
-      startMs: number,
-      rideDurationMs: number,
-      finalWalkMs = 0,
-    ) => ({
-      startTime: startMs,
-      endTime: startMs + rideDurationMs + finalWalkMs,
+  it('uses the boarding origin after an initial walk, not the queried origin', () => {
+    const result = evaluateBoardings(CONSTRAINTS, {
+      startTime: sgtMs('08:20'),
+      endTime: sgtMs('08:50'),
       legs: [
-        {
-          mode: 'BUS',
-          startTime: startMs,
-          endTime: startMs + rideDurationMs,
-          from: { stopCode: '66421' },
-          routeShortName: '116',
-        },
-        ...(finalWalkMs > 0
-          ? [
-              {
-                mode: 'WALK',
-                startTime: startMs + rideDurationMs,
-                endTime: startMs + rideDurationMs + finalWalkMs,
-              },
-            ]
-          : []),
+        { mode: 'WALK', startTime: sgtMs('08:20'), endTime: sgtMs('08:25') },
+        busLeg(sgtMs('08:25'), sgtMs('08:50'), '65009'),
       ],
     })
-
-    // Exactly 08:45:00.000 and 30m00.000s qualifies
-    expect(
-      evaluateItinerary(
-        STOP_BUS_66421,
-        CONSTRAINTS,
-        makeSingleLeg(sgtMs('08:15:00'), 1_800_000),
-      ),
-    ).not.toBeNull()
-
-    // 08:44:59.999 fails
-    expect(
-      evaluateItinerary(
-        STOP_BUS_66421,
-        CONSTRAINTS,
-        makeSingleLeg(sgtMs('08:15:00', -1), 1_800_000),
-      ),
-    ).toBeNull()
-
-    // Exactly 09:00:00.000 and 30m00.000s qualifies
-    expect(
-      evaluateItinerary(
-        STOP_BUS_66421,
-        CONSTRAINTS,
-        makeSingleLeg(sgtMs('08:30:00'), 1_800_000),
-      ),
-    ).not.toBeNull()
-
-    // 09:00:00.001 fails
-    expect(
-      evaluateItinerary(
-        STOP_BUS_66421,
-        CONSTRAINTS,
-        makeSingleLeg(sgtMs('08:30:00', 1), 1_800_000),
-      ),
-    ).toBeNull()
-
-    // 30m00.001s ride fails even inside arrival window
-    expect(
-      evaluateItinerary(
-        STOP_BUS_66421,
-        CONSTRAINTS,
-        makeSingleLeg(sgtMs('08:25:00'), 1_800_001),
-      ),
-    ).toBeNull()
-
-    // Final walk pushes arrival past 09:00:00.000 -> fails
-    expect(
-      evaluateItinerary(
-        STOP_BUS_66421,
-        CONSTRAINTS,
-        makeSingleLeg(sgtMs('08:40:00'), 1_000_000, 200_001),
-      ),
-    ).toBeNull()
-
-    // Final walk brings an otherwise too-early transit leg into 08:45:00 -> qualifies
-    expect(
-      evaluateItinerary(
-        STOP_BUS_66421,
-        CONSTRAINTS,
-        makeSingleLeg(sgtMs('08:25:00'), 1_000_000, 200_000),
-      ),
-    ).not.toBeNull()
+    expect(result.journeys.map((journey) => journey.stopId)).toEqual(['65009'])
   })
 
-  it('rejects initial walk to a different boarding stop and supports stopId suffix fallback', () => {
-    const walkedToOtherStop = {
-      startTime: sgtMs('08:20:00'),
-      endTime: sgtMs('08:50:00'),
-      legs: [
-        {
-          mode: 'WALK',
-          startTime: sgtMs('08:20:00'),
-          endTime: sgtMs('08:25:00'),
-        },
-        {
-          mode: 'BUS',
-          startTime: sgtMs('08:25:00'),
-          endTime: sgtMs('08:50:00'),
-          from: { stopCode: '65009' },
-          routeShortName: '43',
-        },
-      ],
-    }
-    expect(
-      evaluateItinerary(STOP_BUS_66421, CONSTRAINTS, walkedToOtherStop),
-    ).toBeNull()
-
-    const viaStopIdSuffix = {
-      startTime: sgtMs('08:30:00'),
-      endTime: sgtMs('08:50:00'),
-      legs: [
-        {
-          mode: 'SUBWAY',
-          startTime: sgtMs('08:30:00'),
-          endTime: sgtMs('08:50:00'),
-          from: { stopCode: null, stopId: '1:NS17' },
-          routeLongName: 'North South Line',
-          routeId: 'NS',
-        },
-      ],
-    }
-    const matched = evaluateItinerary(STOP_NS17, CONSTRAINTS, viaStopIdSuffix)
-    expect(matched?.stopId).toBe('NS17')
-    expect(matched?.services).toEqual([
-      { id: 'NS', name: 'North South Line', mode: 'SUBWAY' },
-    ])
-
-    const emptyStopCodeFallback = {
-      ...viaStopIdSuffix,
-      legs: [
-        {
-          mode: 'SUBWAY',
-          startTime: sgtMs('08:30:00'),
-          endTime: sgtMs('08:50:00'),
-          from: { stopCode: '', stopId: '1:NS17' },
-          routeLongName: 'North South Line',
-          routeId: 'NS',
-        },
-      ],
-    }
-    expect(
-      evaluateItinerary(STOP_NS17, CONSTRAINTS, emptyStopCodeFallback)?.stopId,
-    ).toBe('NS17')
-  })
-
-  it('rejects non-transit modes, walkLimitExceeded, and cross-date boarding', () => {
-    const withCar = {
-      startTime: sgtMs('08:30:00'),
-      endTime: sgtMs('08:50:00'),
-      legs: [
-        {
-          mode: 'CAR',
-          startTime: sgtMs('08:30:00'),
-          endTime: sgtMs('08:40:00'),
-        },
-        {
-          mode: 'BUS',
-          startTime: sgtMs('08:40:00'),
-          endTime: sgtMs('08:50:00'),
-          from: { stopCode: '66421' },
-          routeShortName: '116',
-        },
-      ],
-    }
-    expect(evaluateItinerary(STOP_BUS_66421, CONSTRAINTS, withCar)).toBeNull()
-
-    const walkExceeded = {
-      startTime: sgtMs('08:30:00'),
-      endTime: sgtMs('08:50:00'),
-      walkLimitExceeded: true,
-      legs: [
-        {
-          mode: 'BUS',
-          startTime: sgtMs('08:30:00'),
-          endTime: sgtMs('08:50:00'),
-          from: { stopCode: '66421' },
-          routeShortName: '116',
-        },
-      ],
-    }
-    expect(
-      evaluateItinerary(STOP_BUS_66421, CONSTRAINTS, walkExceeded),
-    ).toBeNull()
-
-    const previousDayBoard = {
-      startTime: Date.parse('2026-06-01T23:55:00+08:00'),
-      endTime: sgtMs('08:50:00'),
-      legs: [
-        {
-          mode: 'BUS',
-          startTime: Date.parse('2026-06-01T23:55:00+08:00'),
-          endTime: sgtMs('08:50:00'),
-          from: { stopCode: '66421' },
-          routeShortName: '116',
-        },
-      ],
-    }
-    expect(
-      evaluateItinerary(STOP_BUS_66421, CONSTRAINTS, previousDayBoard),
-    ).toBeNull()
-  })
-
-  it('throws on malformed itinerary payloads and returns first qualifying match', () => {
-    expect(() =>
-      evaluateItinerary(STOP_BUS_66421, CONSTRAINTS, { legs: [] }),
-    ).toThrow()
-
-    const first = findFirstQualifyingJourney(STOP_BUS_66421, CONSTRAINTS, [
-      {
-        startTime: sgtMs('08:32:00'),
-        endTime: sgtMs('08:44:00'),
+  it.each([null, ''])(
+    'supports stopId suffix fallback for stopCode %s',
+    (stopCode) => {
+      const result = evaluateBoardings(CONSTRAINTS, {
+        startTime: sgtMs('08:30'),
+        endTime: sgtMs('08:50'),
         legs: [
           {
-            mode: 'BUS',
-            startTime: sgtMs('08:32:00'),
-            endTime: sgtMs('08:44:00'),
-            from: { stopCode: '66421' },
-            routeShortName: '116',
+            mode: 'SUBWAY',
+            startTime: sgtMs('08:30'),
+            endTime: sgtMs('08:50'),
+            from: { stopCode, stopId: '1:NS17' },
+            routeLongName: 'North South Line',
+            routeId: 'NS',
           },
         ],
-      },
-      {
-        startTime: sgtMs('08:35:00'),
-        endTime: sgtMs('08:55:00'),
-        legs: [
-          {
-            mode: 'BUS',
-            startTime: sgtMs('08:35:00'),
-            endTime: sgtMs('08:55:00'),
-            from: { stopCode: '66421' },
-            routeShortName: '88',
-          },
-        ],
-      },
-    ])
-    expect(first?.services[0]?.name).toBe('88')
+      })
+      expect(result.journeys[0]?.stopId).toBe('NS17')
+      expect(result.journeys[0]?.services).toEqual([
+        { id: 'NS', name: 'North South Line', mode: 'SUBWAY' },
+      ])
+    },
+  )
+
+  it('qualifies downstream even when an earlier ride exceeds the cap or crosses dates', () => {
+    const previousDay = Date.parse('2026-06-01T23:55:00+08:00')
+    const result = evaluateBoardings(CONSTRAINTS, {
+      startTime: previousDay,
+      endTime: sgtMs('08:55'),
+      legs: [
+        busLeg(previousDay, sgtMs('08:40')),
+        busLeg(sgtMs('08:45'), sgtMs('08:55'), '65009'),
+      ],
+    })
+    expect(result.journeys.map((journey) => journey.stopId)).toEqual(['65009'])
+    expect(result.journeys[0]?.rideMs).toBe(600_000)
   })
+
+  it('rejects a previous-date boarding and a different-date arrival', () => {
+    const previousDay = Date.parse('2026-06-01T23:55:00+08:00')
+    expect(
+      evaluateBoardings(CONSTRAINTS, {
+        startTime: previousDay,
+        endTime: sgtMs('08:50'),
+        legs: [busLeg(previousDay, sgtMs('08:50'))],
+      }),
+    ).toEqual({ journeys: [], hints: [] })
+    const nextDay = sgtMs('08:30') + 86_400_000
+    expect(
+      evaluateBoardings(CONSTRAINTS, singleRide(nextDay, 20 * 60_000)),
+    ).toEqual({ journeys: [], hints: [] })
+  })
+
+  it('does not prove reboarding on interlined legs but retains their ride and services', () => {
+    const result = evaluateBoardings(CONSTRAINTS, {
+      startTime: sgtMs('08:25'),
+      endTime: sgtMs('08:50'),
+      legs: [
+        busLeg(sgtMs('08:25'), sgtMs('08:35')),
+        {
+          ...busLeg(sgtMs('08:35'), sgtMs('08:50'), '65009'),
+          routeShortName: '88',
+          interlineWithPreviousLeg: true,
+        },
+      ],
+    })
+    expect(result.journeys.map((journey) => journey.stopId)).toEqual(['66421'])
+    expect(result.journeys[0]?.rideMs).toBe(25 * 60_000)
+    expect(result.journeys[0]?.services.map((service) => service.name)).toEqual(
+      ['116', '88'],
+    )
+  })
+
+  it('emits only timed, pickup-allowed intermediate hints with qualifying suffixes', () => {
+    const result = evaluateBoardings(CONSTRAINTS, {
+      startTime: sgtMs('08:00'),
+      endTime: sgtMs('08:58'),
+      legs: [
+        {
+          ...busLeg(sgtMs('08:00'), sgtMs('08:40')),
+          intermediateStops: [
+            { stopCode: 'too-long', departure: sgtMs('08:05') },
+            { stopCode: 'timed', departure: sgtMs('08:20') },
+            { stopId: '1:rail', departure: sgtMs('08:25') },
+            { stopCode: 'untimed' },
+            { stopCode: 'arrival-only', arrival: sgtMs('08:25') },
+            { stopCode: 'forbidden', departure: sgtMs('08:25'), pickupType: 1 },
+            { stopCode: 'none', departure: sgtMs('08:25'), pickupType: 'NONE' },
+            { stopCode: 'outside-leg', departure: sgtMs('08:45') },
+          ],
+        },
+        busLeg(sgtMs('08:45'), sgtMs('08:55'), 'transfer'),
+        { mode: 'WALK', startTime: sgtMs('08:55'), endTime: sgtMs('08:58') },
+      ],
+    })
+    expect(result.journeys.map((journey) => journey.stopId)).toEqual([
+      'transfer',
+    ])
+    expect(result.hints).toEqual([
+      { stopId: 'timed', departureMs: sgtMs('08:20') },
+      { stopId: 'rail', departureMs: sgtMs('08:25') },
+    ])
+    expect(result.journeys[0]?.arrivalAtMs).toBe(sgtMs('08:58'))
+  })
+
+  it('rejects walk-limit violations and unsupported suffixes, but not unsupported prefixes', () => {
+    const transit = busLeg(sgtMs('08:30'), sgtMs('08:50'))
+    const car = {
+      mode: 'CAR',
+      startTime: sgtMs('08:50'),
+      endTime: sgtMs('08:55'),
+    }
+    expect(
+      evaluateBoardings(CONSTRAINTS, {
+        startTime: transit.startTime,
+        endTime: car.endTime,
+        legs: [transit, car],
+      }),
+    ).toEqual({ journeys: [], hints: [] })
+    expect(
+      evaluateBoardings(CONSTRAINTS, {
+        ...singleRide(sgtMs('08:30'), 20 * 60_000),
+        walkLimitExceeded: true,
+      }),
+    ).toEqual({ journeys: [], hints: [] })
+    expect(
+      evaluateBoardings(CONSTRAINTS, {
+        startTime: sgtMs('08:20'),
+        endTime: transit.endTime,
+        legs: [
+          { ...car, startTime: sgtMs('08:20'), endTime: sgtMs('08:30') },
+          transit,
+        ],
+      }).journeys,
+    ).toHaveLength(1)
+    expect(
+      evaluateBoardings(CONSTRAINTS, {
+        startTime: sgtMs('08:30'),
+        endTime: sgtMs('08:50'),
+        legs: [
+          { mode: 'WALK', startTime: sgtMs('08:30'), endTime: sgtMs('08:50') },
+        ],
+      }),
+    ).toEqual({ journeys: [], hints: [] })
+  })
+
+  it.each([
+    null,
+    { legs: [] },
+    { startTime: 1, endTime: 2, legs: [] },
+    { ...singleRide(sgtMs('08:30'), 600_000), walkLimitExceeded: 'false' },
+    {
+      startTime: 1,
+      endTime: 2,
+      legs: [{ mode: 'BUS', startTime: 2, endTime: 1 }],
+    },
+    {
+      startTime: 1,
+      endTime: 2,
+      legs: [{ mode: 'BUS', startTime: 1, endTime: 2, route: '1' }],
+    },
+    {
+      startTime: 1,
+      endTime: 2,
+      legs: [
+        { mode: 'BUS', startTime: 1, endTime: 2, from: { stopCode: '1' } },
+      ],
+    },
+  ])(
+    'throws on malformed payloads even when they cannot qualify: %j',
+    (raw) => {
+      expect(() => evaluateBoardings(CONSTRAINTS, raw)).toThrow()
+    },
+  )
 })

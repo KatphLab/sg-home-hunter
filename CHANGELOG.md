@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-25
+
+- Reuse confirmed boarding points within each commute search and check promising intermediate departures without assuming that passengers can board there.
+
 ## 2026-11-24
 
 - Initialize House Hunter from `KatphLab/ts-bun-template`, preserving the existing commute design and local credentials file.

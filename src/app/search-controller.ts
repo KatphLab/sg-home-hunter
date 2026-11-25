@@ -154,9 +154,10 @@ const resolveWorkplaceFromForm = (
 
 const applyProgress = (ctx: AppContext, progress: SearchProgress): void => {
   const { els, mapView, state } = ctx
+  const previousCount = state.matches.length
   state.matches = progress.matches
-  if (progress.latestMatch) {
-    mapView.addQualifyingStop(progress.latestMatch)
+  for (const match of progress.matches.slice(previousCount)) {
+    mapView.addQualifyingStop(match)
   }
   renderStatusBadge(
     els.resultStatusTag,
@@ -171,7 +172,9 @@ const applyProgress = (ctx: AppContext, progress: SearchProgress): void => {
     progress.matchedCount,
   )
   els.liveStatusRegion.textContent = `Pass ${String(progress.passNumber)} of ${String(progress.totalPasses)}: ${String(progress.triedCount)} of ${String(progress.totalCount)} stops tried, ${String(progress.matchedCount)} matching.`
-  refreshStopList(ctx)
+  if (progress.matchedCount !== previousCount) {
+    refreshStopList(ctx)
+  }
 }
 
 const finalizeSearchRun = (

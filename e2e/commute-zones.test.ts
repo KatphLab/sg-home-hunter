@@ -37,7 +37,7 @@ const makeItinerary = (
     mode: svc.mode,
     startTime: svc.boardMs,
     endTime: svc.endMs,
-    from: { stopCode: idx === 0 ? boardStopCode : 'NE17' },
+    from: { stopCode: idx === 0 ? boardStopCode : 'NS17' },
     routeShortName: svc.routeShortName,
     routeId: svc.routeShortName,
   }))
@@ -142,7 +142,7 @@ const handlePostalSearchRoute = async (
               },
               {
                 mode: 'SUBWAY',
-                routeShortName: 'NE',
+                routeShortName: 'NS',
                 boardMs: sgtIsoMs('08:42'),
                 endMs: sgtIsoMs('08:54'),
               },
@@ -282,7 +282,7 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#result-status-tag')).toHaveText('Completed', {
       timeout: 25_000,
     })
-    await expect(page.locator('#stops-matched-value')).toHaveText('3')
+    await expect(page.locator('#stops-matched-value')).toHaveText('4')
 
     // Select overlapping stop 44011 on the map and verify its journey card.
     await page.click('.stop-plaque-marker[data-stop-id="44011"]')
@@ -303,8 +303,14 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#selected-boarding-time')).toHaveText('08:25')
     await expect(page.locator('#selected-arrival-time')).toHaveText('08:58')
     await expect(page.locator('#selected-services')).toContainText(
-      'Bus 116 → MRT NE',
+      'Bus 116 → MRT NS',
     )
+
+    // The same itinerary proves boarding at the transfer station after the bus.
+    await page.click('.stop-plaque-marker[data-stop-id="NS17"]')
+    await expect(page.locator('#selected-boarding-time')).toHaveText('08:42')
+    await expect(page.locator('#selected-arrival-time')).toHaveText('08:58')
+    await expect(page.locator('#selected-services')).toHaveText('MRT NS')
 
     // Station workplace test: choose NS17, verify NS17 qualifies at 09:00 with 0 min ride & 0 routing calls,
     // CC15 at the same point does NOT auto-qualify, and 65009 qualifies via bus+walk.
