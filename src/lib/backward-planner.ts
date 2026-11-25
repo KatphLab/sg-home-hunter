@@ -73,6 +73,7 @@ interface PlannerContext {
   readonly dayType: DayType
   readonly prevDayType: DayType
   readonly dayStartMs: number
+  readonly dayEndMs: number
   readonly deadlineMs: number
   readonly rideCapMs: number
   readonly minDepartureMs: number
@@ -81,50 +82,112 @@ interface PlannerContext {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value))
 
-const CLOCK_BUCKET_MS = 300_000
+const CLOCK_BUCKET_MS = 600_000
+const RIDE_BUCKET_MS = 60_000
+const DISTINCT_WINDOW_GAP_MS = 30 * 60_000
 
-const isDominated = (
+type BucketedLabels = Map<number, BackwardLabel[]>
+type StopFrontier = Map<string, BucketedLabels>
+
+const isWithinSearchDay = (ms: number, ctx: PlannerContext): boolean =>
+  ms >= ctx.dayStartMs && ms < ctx.dayEndMs
+
+const isBucketDominated = (
   candidate: BackwardLabel,
   existing: BackwardLabel,
 ): boolean =>
-  existing.minRideMs <= candidate.minRideMs &&
-  existing.estRideMs <= candidate.estRideMs &&
   existing.transfers <= candidate.transfers &&
-  existing.earliestClockMs <= candidate.earliestClockMs &&
-  existing.latestClockMs >= candidate.latestClockMs &&
-  Math.floor(existing.estClockMs / CLOCK_BUCKET_MS) ===
-    Math.floor(candidate.estClockMs / CLOCK_BUCKET_MS)
+  Math.floor(existing.minRideMs / RIDE_BUCKET_MS) <=
+    Math.floor(candidate.minRideMs / RIDE_BUCKET_MS) &&
+  Math.floor(existing.estRideMs / RIDE_BUCKET_MS) <=
+    Math.floor(candidate.estRideMs / RIDE_BUCKET_MS)
 
-const insertIntoLabelList = (
-  existing: readonly BackwardLabel[],
-  label: BackwardLabel,
-): { readonly next: BackwardLabel[]; readonly added: boolean } => {
-  if (existing.some((item) => isDominated(label, item))) {
-    return { next: [...existing], added: false }
+const mergeLabelEnvelope = (
+  base: BackwardLabel,
+  other: BackwardLabel,
+): BackwardLabel | null => {
+  const minRideMs = Math.min(base.minRideMs, other.minRideMs)
+  const estRideMs = Math.min(base.estRideMs, other.estRideMs)
+  const earliestClockMs = Math.min(base.earliestClockMs, other.earliestClockMs)
+  const latestClockMs = Math.max(base.latestClockMs, other.latestClockMs)
+  if (
+    minRideMs === base.minRideMs &&
+    estRideMs === base.estRideMs &&
+    earliestClockMs === base.earliestClockMs &&
+    latestClockMs === base.latestClockMs
+  ) {
+    return null
   }
-  const next = existing.filter((item) => !isDominated(item, label))
-  next.push(label)
-  return { next, added: true }
+  return { ...base, minRideMs, estRideMs, earliestClockMs, latestClockMs }
 }
 
-const insertParetoLabel = (
-  frontier: Map<string, BackwardLabel[]>,
-  label: BackwardLabel,
-): boolean => {
-  const { next, added } = insertIntoLabelList(
-    frontier.get(label.stopId) ?? [],
-    label,
-  )
-  if (added) {
-    frontier.set(label.stopId, next)
+const absorbIntoExistingLabel = (
+  list: BackwardLabel[],
+  index: number,
+  existing: BackwardLabel,
+  incoming: BackwardLabel,
+): BackwardLabel | null => {
+  const merged = mergeLabelEnvelope(existing, incoming)
+  if (!merged) {
+    return null
   }
-  return added
+  list[index] = merged
+  const needsPropagate =
+    merged.minRideMs < existing.minRideMs ||
+    merged.earliestClockMs < existing.earliestClockMs ||
+    merged.latestClockMs > existing.latestClockMs
+  return needsPropagate ? merged : null
 }
 
-const addLabelToBag = (
-  bag: BackwardLabel[],
+const insertIntoBucketList = (
+  list: BackwardLabel[],
   label: BackwardLabel,
-): BackwardLabel[] => insertIntoLabelList(bag, label).next
+): BackwardLabel | null => {
+  for (let i = 0; i < list.length; i += 1) {
+    const existing = list[i]
+    if (existing && isBucketDominated(label, existing)) {
+      return absorbIntoExistingLabel(list, i, existing, label)
+    }
+  }
+  let writeIdx = 0
+  let inserted = label
+  for (const item of list) {
+    if (isBucketDominated(item, label)) {
+      inserted = mergeLabelEnvelope(inserted, item) ?? inserted
+    } else {
+      list[writeIdx] = item
+      writeIdx += 1
+    }
+  }
+  list.length = writeIdx
+  list.push(inserted)
+  return inserted
+}
+
+const insertIntoBuckets = (
+  buckets: BucketedLabels,
+  label: BackwardLabel,
+): BackwardLabel | null => {
+  const bucket = Math.floor(label.estClockMs / CLOCK_BUCKET_MS)
+  const list = buckets.get(bucket)
+  if (!list) {
+    buckets.set(bucket, [label])
+    return label
+  }
+  return insertIntoBucketList(list, label)
+}
+
+const insertFrontierLabel = (
+  frontier: StopFrontier,
+  label: BackwardLabel,
+): BackwardLabel | null => {
+  let buckets = frontier.get(label.stopId)
+  if (!buckets) {
+    buckets = new Map()
+    frontier.set(label.stopId, buckets)
+  }
+  return insertIntoBuckets(buckets, label)
+}
 
 const computeFinalWalkBounds = (
   stop: Stop,
@@ -200,12 +263,12 @@ const seedFinalWalkLabels = (
   workplace: Workplace,
   ctx: PlannerContext,
   maxFinalWalkMeters: number,
-): Map<string, BackwardLabel[]> => {
-  const seeds = new Map<string, BackwardLabel[]>()
+): StopFrontier => {
+  const seeds: StopFrontier = new Map()
   for (const stop of inventory.stops) {
     const label = createSeedLabel(stop, workplace, ctx, maxFinalWalkMeters)
     if (label) {
-      insertParetoLabel(seeds, label)
+      insertFrontierLabel(seeds, label)
     }
   }
   return seeds
@@ -221,7 +284,7 @@ const getOperatingIntervalsForDate = (
   ctx: PlannerContext,
 ): readonly OperatingIntervalMs[] => {
   if (seg.operatingWindows === undefined) {
-    return [{ startMs: ctx.dayStartMs, endMs: ctx.dayStartMs + DAY_MINUTES_MS }]
+    return [{ startMs: ctx.dayStartMs, endMs: ctx.dayEndMs }]
   }
   const intervals: OperatingIntervalMs[] = []
   const prevOp = seg.operatingWindows[ctx.prevDayType]
@@ -236,7 +299,7 @@ const getOperatingIntervalsForDate = (
     }
   }
   const op = seg.operatingWindows[ctx.dayType]
-  if (op !== undefined) {
+  if (op !== undefined && op.firstMin < 1440) {
     intervals.push({
       startMs: ctx.dayStartMs + op.firstMin * 60_000,
       endMs: ctx.dayStartMs + op.lastMin * 60_000,
@@ -249,28 +312,27 @@ const stepLabelAcrossSegment = (
   label: BackwardLabel,
   seg: TransitSegment,
   round: number,
+  intervals: readonly OperatingIntervalMs[],
   ctx: PlannerContext,
-): readonly BackwardLabel[] => {
+  nextBag: BucketedLabels,
+  tracker: FrontierTracker,
+): void => {
   const nextMinRide = label.minRideMs + seg.minRideMs
   if (nextMinRide > ctx.rideCapMs) {
-    return []
+    return
   }
   const maxStepMs = Math.max(seg.estRideMs, seg.minRideMs)
-  const stepped: BackwardLabel[] = []
-  for (const { startMs, endMs } of getOperatingIntervalsForDate(seg, ctx)) {
+  for (const { startMs, endMs } of intervals) {
     const nextLatest = Math.min(label.latestClockMs - seg.minRideMs, endMs)
     const nextEarliest = Math.max(
       label.earliestClockMs - maxStepMs,
       startMs,
       ctx.minDepartureMs,
     )
-    if (
-      nextLatest < nextEarliest ||
-      getSingaporeDateFromInstant(nextLatest) !== ctx.searchDate
-    ) {
+    if (nextLatest < nextEarliest || !isWithinSearchDay(nextLatest, ctx)) {
       continue
     }
-    stepped.push({
+    const stepped: BackwardLabel = {
       stopId: seg.fromStopId,
       minRideMs: nextMinRide,
       estRideMs: label.estRideMs + seg.estRideMs,
@@ -282,51 +344,64 @@ const stepLabelAcrossSegment = (
         nextLatest,
       ),
       transfers: round,
-    })
+    }
+    insertIntoBuckets(nextBag, stepped)
+    recordUpdatedLabel(stepped, tracker)
   }
-  return stepped
 }
 
 interface FrontierTracker {
-  readonly boardedFrontiers: Map<string, BackwardLabel[]>
-  readonly updatedStops: Map<string, BackwardLabel[]>
+  readonly boardedFrontiers: StopFrontier
+  readonly updatedStops: StopFrontier | null
 }
 
 const recordUpdatedLabel = (
   label: BackwardLabel,
   tracker: FrontierTracker,
 ): void => {
-  if (insertParetoLabel(tracker.boardedFrontiers, label)) {
-    insertParetoLabel(tracker.updatedStops, label)
+  const recorded = insertFrontierLabel(tracker.boardedFrontiers, label)
+  if (recorded && tracker.updatedStops) {
+    insertFrontierLabel(tracker.updatedStops, recorded)
   }
 }
 
 const mergeEnteringLabels = (
-  bag: BackwardLabel[],
-  entering: readonly BackwardLabel[] | undefined,
-): BackwardLabel[] => {
+  bag: BucketedLabels,
+  entering: BucketedLabels | undefined,
+): void => {
   if (!entering) {
-    return bag
+    return
   }
-  let merged = bag
-  for (const label of entering) {
-    merged = addLabelToBag(merged, label)
+  for (const list of entering.values()) {
+    for (const label of list) {
+      insertIntoBuckets(bag, label)
+    }
   }
-  return merged
 }
 
 const stepBagAcrossSegment = (
-  bag: readonly BackwardLabel[],
+  bag: BucketedLabels,
   seg: TransitSegment,
   round: number,
   tracker: FrontierTracker,
   ctx: PlannerContext,
-): BackwardLabel[] => {
-  let nextBag: BackwardLabel[] = []
-  for (const label of bag) {
-    for (const stepped of stepLabelAcrossSegment(label, seg, round, ctx)) {
-      nextBag = addLabelToBag(nextBag, stepped)
-      recordUpdatedLabel(stepped, tracker)
+): BucketedLabels => {
+  const nextBag: BucketedLabels = new Map()
+  const intervals = getOperatingIntervalsForDate(seg, ctx)
+  if (intervals.length === 0) {
+    return nextBag
+  }
+  for (const list of bag.values()) {
+    for (const label of list) {
+      stepLabelAcrossSegment(
+        label,
+        seg,
+        round,
+        intervals,
+        ctx,
+        nextBag,
+        tracker,
+      )
     }
   }
   return nextBag
@@ -335,11 +410,11 @@ const stepBagAcrossSegment = (
 const relaxEstimatedPattern = (
   pattern: TransitPattern,
   round: number,
-  roundInput: ReadonlyMap<string, readonly BackwardLabel[]>,
+  roundInput: StopFrontier,
   tracker: FrontierTracker,
   ctx: PlannerContext,
 ): void => {
-  let bag: BackwardLabel[] = []
+  let bag: BucketedLabels = new Map()
   let prevFromStopId: string | undefined
   for (let i = pattern.segments.length - 1; i >= 0; i -= 1) {
     const seg = pattern.segments[i]
@@ -347,11 +422,11 @@ const relaxEstimatedPattern = (
       continue
     }
     if (prevFromStopId !== undefined && seg.toStopId !== prevFromStopId) {
-      bag = []
+      bag = new Map()
     }
     prevFromStopId = seg.fromStopId
-    bag = mergeEnteringLabels(bag, roundInput.get(seg.toStopId))
-    if (bag.length === 0) {
+    mergeEnteringLabels(bag, roundInput.get(seg.toStopId))
+    if (bag.size === 0) {
       continue
     }
     bag = stepBagAcrossSegment(bag, seg, round, tracker, ctx)
@@ -381,10 +456,7 @@ const shiftLabelByTransfer = (
 ): BackwardLabel | null => {
   const nextLatest = label.latestClockMs - walkMs - minWaitMs
   const nextEarliest = ctx.minDepartureMs
-  if (
-    nextLatest < nextEarliest ||
-    getSingaporeDateFromInstant(nextLatest) !== ctx.searchDate
-  ) {
+  if (nextLatest < nextEarliest || !isWithinSearchDay(nextLatest, ctx)) {
     return null
   }
   return {
@@ -404,51 +476,75 @@ const shiftLabelByTransfer = (
 
 const addShiftedTransfer = (
   shifted: BackwardLabel | null,
-  transferFrontiers: Map<string, BackwardLabel[]>,
-  nextInput: Map<string, BackwardLabel[]>,
+  transferFrontiers: StopFrontier,
+  nextInput: StopFrontier,
 ): void => {
-  if (shifted && insertParetoLabel(transferFrontiers, shifted)) {
-    insertParetoLabel(nextInput, shifted)
+  if (!shifted) {
+    return
+  }
+  const recorded = insertFrontierLabel(transferFrontiers, shifted)
+  if (recorded) {
+    insertFrontierLabel(nextInput, recorded)
+  }
+}
+
+const propagateTransfersForLabel = (
+  label: BackwardLabel,
+  links: readonly TransferLink[],
+  nextRound: number,
+  transferFrontiers: StopFrontier,
+  nextInput: StopFrontier,
+  ctx: PlannerContext,
+): void => {
+  addShiftedTransfer(
+    shiftLabelByTransfer(
+      label,
+      label.stopId,
+      0,
+      SAME_STOP_MIN_WAIT_MS,
+      SAME_STOP_EST_WAIT_MS,
+      nextRound,
+      ctx,
+    ),
+    transferFrontiers,
+    nextInput,
+  )
+  for (const link of links) {
+    addShiftedTransfer(
+      shiftLabelByTransfer(
+        label,
+        link.fromStopId,
+        link.walkMs,
+        link.minTransferWaitMs,
+        link.estTransferWaitMs,
+        nextRound,
+        ctx,
+      ),
+      transferFrontiers,
+      nextInput,
+    )
   }
 }
 
 const propagateTransfers = (
-  updatedStops: ReadonlyMap<string, readonly BackwardLabel[]>,
+  updatedStops: StopFrontier,
   incomingTransfers: ReadonlyMap<string, readonly TransferLink[]>,
   nextRound: number,
-  transferFrontiers: Map<string, BackwardLabel[]>,
+  transferFrontiers: StopFrontier,
   ctx: PlannerContext,
-): Map<string, BackwardLabel[]> => {
-  const nextInput = new Map<string, BackwardLabel[]>()
-  for (const [toStopId, labels] of updatedStops.entries()) {
+): StopFrontier => {
+  const nextInput: StopFrontier = new Map()
+  for (const [toStopId, buckets] of updatedStops.entries()) {
     const links = incomingTransfers.get(toStopId) ?? []
-    for (const label of labels) {
-      addShiftedTransfer(
-        shiftLabelByTransfer(
+    for (const list of buckets.values()) {
+      for (const label of list) {
+        propagateTransfersForLabel(
           label,
-          label.stopId,
-          0,
-          SAME_STOP_MIN_WAIT_MS,
-          SAME_STOP_EST_WAIT_MS,
+          links,
           nextRound,
-          ctx,
-        ),
-        transferFrontiers,
-        nextInput,
-      )
-      for (const link of links) {
-        addShiftedTransfer(
-          shiftLabelByTransfer(
-            label,
-            link.fromStopId,
-            link.walkMs,
-            link.minTransferWaitMs,
-            link.estTransferWaitMs,
-            nextRound,
-            ctx,
-          ),
           transferFrontiers,
           nextInput,
+          ctx,
         )
       }
     }
@@ -466,35 +562,82 @@ const orderLabelsForProbe = (
     if (aEstOk !== bEstOk) {
       return aEstOk - bEstOk
     }
-    return a.transfers !== b.transfers
-      ? a.transfers - b.transfers
-      : a.estRideMs - b.estRideMs
+    if (a.transfers !== b.transfers) {
+      return a.transfers - b.transfers
+    }
+    if (a.estRideMs !== b.estRideMs) {
+      return a.estRideMs - b.estRideMs
+    }
+    return b.estClockMs - a.estClockMs
   })
 
-const appendBracketInstants = (
-  chosenInstants: number[],
-  primary: BackwardLabel,
+const selectDistinctWindowAnchors = (
+  ordered: readonly BackwardLabel[],
+  rideCapMs: number,
+  maxProbesPerStop: number,
+): readonly BackwardLabel[] => {
+  const primary = ordered[0]
+  if (!primary) {
+    return []
+  }
+  const primaryEstOk = primary.estRideMs <= rideCapMs
+  const anchors: BackwardLabel[] = [primary]
+  for (let i = 1; i < ordered.length; i += 1) {
+    if (anchors.length >= maxProbesPerStop) {
+      break
+    }
+    const label = ordered[i]
+    if (!label || (primaryEstOk && label.estRideMs > rideCapMs)) {
+      continue
+    }
+    if (
+      anchors.every(
+        (anchor) =>
+          Math.abs(label.estClockMs - anchor.estClockMs) >=
+          DISTINCT_WINDOW_GAP_MS,
+      )
+    ) {
+      anchors.push(label)
+    }
+  }
+  return anchors
+}
+
+const pushUniqueProbeClock = (
+  uniqueClocks: string[],
+  probeMs: number,
   ctx: PlannerContext,
   maxProbesPerStop: number,
 ): void => {
+  if (uniqueClocks.length >= maxProbesPerStop) {
+    return
+  }
+  const clampedMs = clamp(probeMs, ctx.dayStartMs, ctx.deadlineMs)
+  if (!isWithinSearchDay(clampedMs, ctx)) {
+    return
+  }
+  const formatted = formatSingaporeTime(clampedMs, true)
+  if (!uniqueClocks.includes(formatted)) {
+    uniqueClocks.push(formatted)
+  }
+}
+
+const getBracketAnchorAndOffsets = (
+  label: BackwardLabel,
+  ctx: PlannerContext,
+): { readonly anchorMs: number; readonly offsets: readonly number[] } => {
   const anchorMs = clamp(
-    primary.estClockMs - PRIMARY_FORWARD_BIAS_MS,
+    label.estClockMs - PRIMARY_FORWARD_BIAS_MS,
     ctx.dayStartMs,
     ctx.deadlineMs,
   )
   const fourthOffset =
-    anchorMs + 2 * BRACKET_OFFSET_MS <= primary.latestClockMs
+    anchorMs + 2 * BRACKET_OFFSET_MS <= label.latestClockMs
       ? 2 * BRACKET_OFFSET_MS
       : -2 * BRACKET_OFFSET_MS
-  const offsets = [0, -BRACKET_OFFSET_MS, BRACKET_OFFSET_MS, fourthOffset]
-  for (const offset of offsets) {
-    if (chosenInstants.length >= maxProbesPerStop) {
-      return
-    }
-    const probeMs = clamp(anchorMs + offset, ctx.dayStartMs, ctx.deadlineMs)
-    if (getSingaporeDateFromInstant(probeMs) === ctx.searchDate) {
-      chosenInstants.push(probeMs)
-    }
+  return {
+    anchorMs,
+    offsets: [-BRACKET_OFFSET_MS, BRACKET_OFFSET_MS, fourthOffset],
   }
 }
 
@@ -504,20 +647,31 @@ const buildCandidateDepartures = (
   maxProbesPerStop: number,
 ): readonly string[] => {
   const ordered = orderLabelsForProbe(labels, ctx.rideCapMs)
-  const chosenInstants: number[] = []
-  const primary = ordered[0]
-  if (primary) {
-    appendBracketInstants(chosenInstants, primary, ctx, maxProbesPerStop)
-  }
-
+  const anchors = selectDistinctWindowAnchors(
+    ordered,
+    ctx.rideCapMs,
+    maxProbesPerStop,
+  )
   const uniqueClocks: string[] = []
-  for (const ms of chosenInstants) {
-    const formatted = formatSingaporeTime(ms, true)
-    if (!uniqueClocks.includes(formatted)) {
-      uniqueClocks.push(formatted)
+  for (const anchor of anchors) {
+    const { anchorMs } = getBracketAnchorAndOffsets(anchor, ctx)
+    pushUniqueProbeClock(uniqueClocks, anchorMs, ctx, maxProbesPerStop)
+  }
+  for (const anchor of anchors) {
+    if (uniqueClocks.length >= maxProbesPerStop) {
+      break
+    }
+    const { anchorMs, offsets } = getBracketAnchorAndOffsets(anchor, ctx)
+    for (const offset of offsets) {
+      pushUniqueProbeClock(
+        uniqueClocks,
+        anchorMs + offset,
+        ctx,
+        maxProbesPerStop,
+      )
     }
   }
-  return uniqueClocks.slice(0, maxProbesPerStop)
+  return uniqueClocks
 }
 
 const summarizeLead = (
@@ -575,21 +729,22 @@ const compareLeads = (
 const buildSortedLeads = (
   inventory: StopInventory,
   workplace: Workplace,
-  boardedFrontiers: ReadonlyMap<string, readonly BackwardLabel[]>,
+  boardedFrontiers: StopFrontier,
   ctx: PlannerContext,
   maxProbesPerStop: number,
 ): readonly BackwardLead[] => {
   const stopsById = new Map(inventory.stops.map((s) => [s.id, s]))
   const leads: BackwardLead[] = []
-  for (const [stopId, labels] of boardedFrontiers.entries()) {
+  for (const [stopId, buckets] of boardedFrontiers.entries()) {
     const stop = stopsById.get(stopId)
     if (
       !stop ||
       isDestinationStationMatch(stop, workplace) ||
-      labels.length === 0
+      buckets.size === 0
     ) {
       continue
     }
+    const labels = [...buckets.values()].flat()
     const lead = summarizeLead(stop, labels, ctx, maxProbesPerStop)
     if (lead) {
       leads.push(lead)
@@ -602,7 +757,7 @@ const buildSortedLeads = (
 const relaxPatternsForRound = (
   patterns: readonly TransitPattern[],
   round: number,
-  roundInput: ReadonlyMap<string, readonly BackwardLabel[]>,
+  roundInput: StopFrontier,
   tracker: FrontierTracker,
   ctx: PlannerContext,
 ): void => {
@@ -615,22 +770,24 @@ const relaxPatternsForRound = (
 
 const runBackwardRounds = (
   networkIndex: TransitNetworkIndex,
-  seedLabels: Map<string, BackwardLabel[]>,
+  seedLabels: StopFrontier,
   maxTransfers: number,
   ctx: PlannerContext,
-): ReadonlyMap<string, readonly BackwardLabel[]> => {
+): StopFrontier => {
   const incomingTransfers = indexIncomingTransfers(networkIndex.transfers)
-  const boardedFrontiers = new Map<string, BackwardLabel[]>()
-  const transferFrontiers = new Map<string, BackwardLabel[]>()
+  const boardedFrontiers: StopFrontier = new Map()
+  const transferFrontiers: StopFrontier = new Map()
   let roundInput = seedLabels
 
   for (let round = 0; round <= maxTransfers; round += 1) {
     if (roundInput.size === 0) {
       break
     }
+    const updatedStops: StopFrontier | null =
+      round < maxTransfers ? new Map() : null
     const tracker: FrontierTracker = {
       boardedFrontiers,
-      updatedStops: new Map<string, BackwardLabel[]>(),
+      updatedStops,
     }
     relaxPatternsForRound(
       networkIndex.patterns,
@@ -639,16 +796,15 @@ const runBackwardRounds = (
       tracker,
       ctx,
     )
-    roundInput =
-      round < maxTransfers
-        ? propagateTransfers(
-            tracker.updatedStops,
-            incomingTransfers,
-            round + 1,
-            transferFrontiers,
-            ctx,
-          )
-        : new Map()
+    roundInput = updatedStops
+      ? propagateTransfers(
+          updatedStops,
+          incomingTransfers,
+          round + 1,
+          transferFrontiers,
+          ctx,
+        )
+      : new Map()
   }
   return boardedFrontiers
 }
@@ -677,6 +833,7 @@ export const planBackwardLeads = (
     dayType: getServiceDayType(options.constraints.searchDate),
     prevDayType: getServiceDayType(getSingaporeDateFromInstant(dayStartMs - 1)),
     dayStartMs,
+    dayEndMs: dayStartMs + DAY_MINUTES_MS,
     deadlineMs,
     rideCapMs,
     minDepartureMs: Math.max(

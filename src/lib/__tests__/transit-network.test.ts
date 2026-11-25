@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import type { StopInventory } from '@lib/commute-types.js'
 import {
   buildTransitNetworkIndex,
@@ -144,6 +145,44 @@ describe('transit-network', () => {
         weekday: { firstMin: 345, lastMin: 1440 },
         saturday: { firstMin: 345, lastMin: 1440 },
         sunday_holiday: { firstMin: 360, lastMin: 1440 },
+      },
+    })
+
+    // Inherit weekday raw clock for '=' instead of weekday's rolled-over +1440 minute,
+    // and treat small (< 04:00) first+last pairs as after-midnight departures of that service day.
+    const svc200AEnd = parseBusRouterFirstLastLine(
+      '200A 0903 0014 0015 0015 0014 =',
+    )
+    expect(svc200AEnd).toEqual({
+      serviceId: '200A',
+      windows: {
+        weekday: { firstMin: 543, lastMin: 1454 },
+        saturday: { firstMin: 1455, lastMin: 1455 },
+        sunday_holiday: { firstMin: 1454, lastMin: 1454 },
+      },
+    })
+
+    const svc200AMid = parseBusRouterFirstLastLine(
+      '200A 0850 0003 0003 = 0002 0002',
+    )
+    expect(svc200AMid).toEqual({
+      serviceId: '200A',
+      windows: {
+        weekday: { firstMin: 530, lastMin: 1443 },
+        saturday: { firstMin: 1443, lastMin: 1443 },
+        sunday_holiday: { firstMin: 1442, lastMin: 1442 },
+      },
+    })
+
+    const svc200AEarly = parseBusRouterFirstLastLine(
+      '200A 0845 0001 0001 = 2400 2400',
+    )
+    expect(svc200AEarly).toEqual({
+      serviceId: '200A',
+      windows: {
+        weekday: { firstMin: 525, lastMin: 1441 },
+        saturday: { firstMin: 1441, lastMin: 1441 },
+        sunday_holiday: { firstMin: 1440, lastMin: 1440 },
       },
     })
 
@@ -395,5 +434,129 @@ describe('transit-network', () => {
     )
     expect(parseBusNetworkDate('12026-11-199', '2026-11-26')).toBe('2026-11-26')
     expect(parseBusNetworkDate('', '2026-11-26')).toBe('2026-11-26')
+  })
+
+  it('preserves expressway bus 858 95159 -> 65191 within a 12-minute minRideMs bound', () => {
+    const expressInventory: StopInventory = {
+      inventoryDate: '2026-11-24',
+      stops: [
+        {
+          id: '95159',
+          kind: 'bus',
+          name: 'Bef Changi Airport PTB3',
+          point: { latitude: 1.356_793, longitude: 103.984_689 },
+        },
+        {
+          id: '65191',
+          kind: 'bus',
+          name: 'Aft TPE',
+          point: { latitude: 1.390_718, longitude: 103.897_381 },
+        },
+      ],
+    }
+    const index = buildTransitNetworkIndex({
+      inventory: expressInventory,
+      networkDate: '2026-11-26',
+      busServices: {
+        '858': { name: '858', routes: [['95159', '65191']] },
+      },
+      busFirstLast: {
+        '95159': ['858 0633 0044 = 0043 0632 0039'],
+        '65191': ['858 0647 0056 = = 0645 0052'],
+      },
+    })
+    const seg = index.patterns.find((p) => p.serviceId === '858')?.segments[0]
+    expect(seg).toBeDefined()
+    expect(seg?.minRideMs).toBeLessThanOrEqual(12 * 60_000)
+  })
+
+  it('continues Circle Line Dhoby Ghaut branch through CC4 -> CC5 without inventing CC3 -> CC4 -> CC34', () => {
+    const ccInventory: StopInventory = {
+      inventoryDate: '2026-11-24',
+      stops: [
+        {
+          id: 'CC1',
+          kind: 'rail',
+          name: 'Dhoby Ghaut',
+          point: { latitude: 1.298_786, longitude: 103.845_02 },
+        },
+        {
+          id: 'CC2',
+          kind: 'rail',
+          name: 'Bras Basah',
+          point: { latitude: 1.296_896, longitude: 103.850_55 },
+        },
+        {
+          id: 'CC3',
+          kind: 'rail',
+          name: 'Esplanade',
+          point: { latitude: 1.293_258, longitude: 103.855_974 },
+        },
+        {
+          id: 'CC4',
+          kind: 'rail',
+          name: 'Promenade',
+          point: { latitude: 1.293_854, longitude: 103.860_151 },
+        },
+        {
+          id: 'CC5',
+          kind: 'rail',
+          name: 'Nicoll Highway',
+          point: { latitude: 1.299_671, longitude: 103.8635 },
+        },
+        {
+          id: 'CC34',
+          kind: 'rail',
+          name: 'Bayfront',
+          point: { latitude: 1.282_535, longitude: 103.859_73 },
+        },
+      ],
+    }
+    const index = buildTransitNetworkIndex({
+      inventory: ccInventory,
+      networkDate: '2026-11-26',
+      busServices: {},
+      busFirstLast: {},
+    })
+    const ccPatterns = index.patterns.filter((p) =>
+      p.serviceId.startsWith('CC'),
+    )
+    const hasConsecutive = (from: string, via: string, to: string): boolean =>
+      ccPatterns.some((p) =>
+        p.segments.some(
+          (seg, idx) =>
+            seg.fromStopId === from &&
+            seg.toStopId === via &&
+            p.segments[idx + 1]?.fromStopId === via &&
+            p.segments[idx + 1]?.toStopId === to,
+        ),
+      )
+
+    const loopPatterns = ccPatterns.filter((p) => p.serviceId === 'CC_LOOP')
+    const hasEdge = (
+      patterns: readonly (typeof ccPatterns)[number][],
+      from: string,
+      to: string,
+    ): boolean =>
+      patterns.some((p) =>
+        p.segments.some((s) => s.fromStopId === from && s.toStopId === to),
+      )
+
+    expect(hasConsecutive('CC3', 'CC4', 'CC5')).toBe(true)
+    expect(hasConsecutive('CC5', 'CC4', 'CC3')).toBe(true)
+    expect(hasConsecutive('CC3', 'CC4', 'CC34')).toBe(false)
+    expect(hasConsecutive('CC34', 'CC4', 'CC3')).toBe(false)
+    expect(hasEdge(loopPatterns, 'CC4', 'CC5')).toBe(true)
+    expect(hasEdge(loopPatterns, 'CC34', 'CC4')).toBe(true)
+    expect(hasEdge(loopPatterns, 'CC4', 'CC34')).toBe(true)
+    expect(hasEdge(loopPatterns, 'CC5', 'CC4')).toBe(true)
+  })
+
+  it('ships bus-network.tsv with networkDate tied to the bundled data timestamp', () => {
+    const rawTsv = readFileSync('public/data/bus-network.tsv', 'utf8')
+    const parsed = parseBusNetworkTsv(rawTsv)
+    expect(parsed.networkDate).toBe(
+      parseBusNetworkDate('2026-11-06T02:05:26.522Z', '2026-11-25'),
+    )
   })
 })

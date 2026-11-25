@@ -834,4 +834,280 @@ describe('backward-planner', () => {
     expect(bp1Lead).toBeDefined()
     expect(bp1Lead?.transfers).toBe(0)
   })
+
+  it('preserves expressway bus 858 95159 -> 65191 under a 12-minute ride cap', () => {
+    const inv858: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: [
+        {
+          id: '95159',
+          kind: 'bus',
+          name: 'Bef Changi Airport PTB3',
+          point: { latitude: 1.356_793, longitude: 103.984_689 },
+        },
+        {
+          id: '65191',
+          kind: 'bus',
+          name: 'Aft TPE',
+          point: { latitude: 1.390_718, longitude: 103.897_381 },
+        },
+      ],
+    }
+    const network = buildTransitNetworkIndex({
+      inventory: inv858,
+      networkDate: SEARCH_DATE,
+      busServices: {
+        '858': { name: '858', routes: [['95159', '65191']] },
+      },
+      busFirstLast: {
+        '95159': ['858 0633 0044 = 0043 0632 0039'],
+        '65191': ['858 0647 0056 = = 0645 0052'],
+      },
+    })
+    const plan = planBackwardLeads({
+      inventory: inv858,
+      networkIndex: network,
+      workplace: {
+        kind: 'postal',
+        postalCode: '790000',
+        label: 'Aft TPE',
+        point: { latitude: 1.390_718, longitude: 103.897_381 },
+      },
+      constraints: {
+        searchDate: '2026-11-27', // Friday after midnight (Thursday service day)
+        officeStart: '01:00',
+        rideCapMinutes: 12,
+      },
+      maxFinalWalkMeters: 50,
+    })
+    expect(plan.leads.map((l) => l.stop.id)).toContain('95159')
+  })
+
+  it('carries over Sunday post-midnight 200A stops to Monday 00:10 and avoids false 24h Sunday windows', () => {
+    const inv200A: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: [
+        {
+          id: '18149',
+          kind: 'bus',
+          name: 'Aft Clementi Rd',
+          point: { latitude: 1.298_95, longitude: 103.770_43 },
+        },
+        {
+          id: '18129',
+          kind: 'bus',
+          name: 'Kent Ridge Stn',
+          point: { latitude: 1.294_09, longitude: 103.784_01 },
+        },
+        {
+          id: '16021',
+          kind: 'bus',
+          name: 'Bef Dover Rd',
+          point: { latitude: 1.301_54, longitude: 103.778_84 },
+        },
+      ],
+    }
+    const network = buildTransitNetworkIndex({
+      inventory: inv200A,
+      networkDate: '2026-11-30',
+      busServices: {
+        '200A': { name: '200A', routes: [['18149', '18129', '16021']] },
+      },
+      busFirstLast: {
+        '18149': ['200A 0850 0003 0003 = 0002 0002'],
+        '18129': ['200A 0852 0005 0004 0004 0003 0003'],
+        '16021': ['200A 0903 0014 0015 0015 0014 ='],
+      },
+    })
+
+    const mondayPlan = planBackwardLeads({
+      inventory: inv200A,
+      networkIndex: network,
+      workplace: {
+        kind: 'postal',
+        postalCode: '119074',
+        label: '18129',
+        point: { latitude: 1.294_09, longitude: 103.784_01 },
+      },
+      constraints: {
+        searchDate: '2026-11-30', // Monday
+        officeStart: '00:10',
+        rideCapMinutes: 30,
+      },
+      maxFinalWalkMeters: 50,
+    })
+    const stop18149 = mondayPlan.leads.find((l) => l.stop.id === '18149')
+    expect(stop18149).toBeDefined()
+    expect(
+      stop18149?.candidateDepartures.every((clock) => clock <= '00:10:00'),
+    ).toBe(true)
+
+    // Sunday 12:00 must NOT discover 18129 -> 16021 since Sunday 200A only runs after midnight (00:03 / 00:14)
+    const sundayDayPlan = planBackwardLeads({
+      inventory: inv200A,
+      networkIndex: network,
+      workplace: {
+        kind: 'postal',
+        postalCode: '119074',
+        label: '16021',
+        point: { latitude: 1.301_54, longitude: 103.778_84 },
+      },
+      constraints: {
+        searchDate: '2026-11-29', // Sunday
+        officeStart: '12:00',
+        rideCapMinutes: 30,
+      },
+      maxFinalWalkMeters: 50,
+    })
+    expect(sundayDayPlan.leads).toEqual([])
+  })
+
+  it('allocates probes across both overnight and morning feasible windows within the 4-probe budget', () => {
+    const network: TransitNetworkIndex = {
+      version: 1,
+      networkDate: SEARCH_DATE,
+      inventoryDate: INVENTORY.inventoryDate,
+      provenance: [],
+      coveredStopIds: ['FAR_WEST', 'MID_BUS', 'WP_STOP'],
+      transfers: [],
+      patterns: [
+        {
+          patternId: 'connecting-0545-0600',
+          serviceId: 'C1',
+          serviceName: 'C1',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'MID_BUS',
+              toStopId: 'WP_STOP',
+              minRideMs: 10 * 60_000,
+              estRideMs: 10 * 60_000,
+              operatingWindows: {
+                weekday: { firstMin: 345, lastMin: 360 }, // 05:45-06:00
+              },
+            },
+          ],
+        },
+        {
+          patternId: 'feeder-0530-2522',
+          serviceId: 'F1',
+          serviceName: 'F1',
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'FAR_WEST',
+              toStopId: 'MID_BUS',
+              minRideMs: 10 * 60_000,
+              estRideMs: 10 * 60_000,
+              operatingWindows: {
+                // Previous day runs 05:30 -> 25:22 (carries over 00:00-01:22), current day starts 05:30
+                weekday: { firstMin: 330, lastMin: 1522 },
+              },
+            },
+          ],
+        },
+      ],
+    }
+
+    const plan = planBackwardLeads({
+      inventory: INVENTORY,
+      networkIndex: network,
+      workplace: WP_GATE_WORKPLACE,
+      constraints: {
+        searchDate: SEARCH_DATE,
+        officeStart: '06:00',
+        rideCapMinutes: 180,
+      },
+      maxFinalWalkMeters: 50,
+      maxProbesPerStop: 4,
+    })
+
+    const farLead = plan.leads.find((l) => l.stop.id === 'FAR_WEST')
+    expect(farLead).toBeDefined()
+    expect(farLead?.candidateDepartures.length).toBeLessThanOrEqual(4)
+    expect(
+      farLead?.candidateDepartures.some((clock) => clock >= '05:00:00'),
+    ).toBe(true)
+    expect(
+      farLead?.candidateDepartures.some((clock) => clock < '02:00:00'),
+    ).toBe(true)
+  })
+
+  it('routes CC3 to CC5 on Circle Line with zero transfers without inventing CC3 -> CC4 -> CC34', () => {
+    const ccStops: Stop[] = [
+      {
+        id: 'CC3',
+        kind: 'rail',
+        name: 'Esplanade',
+        point: { latitude: 1.293_258, longitude: 103.855_974 },
+      },
+      {
+        id: 'CC4',
+        kind: 'rail',
+        name: 'Promenade',
+        point: { latitude: 1.293_854, longitude: 103.860_151 },
+      },
+      {
+        id: 'CC5',
+        kind: 'rail',
+        name: 'Nicoll Highway',
+        point: { latitude: 1.299_671, longitude: 103.8635 },
+      },
+      {
+        id: 'CC10',
+        kind: 'rail',
+        name: 'MacPherson',
+        point: { latitude: 1.326_728, longitude: 103.890_102 },
+      },
+      {
+        id: 'CC34',
+        kind: 'rail',
+        name: 'Bayfront',
+        point: { latitude: 1.282_535, longitude: 103.859_73 },
+      },
+    ]
+    const ccInventory: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: ccStops,
+    }
+    const network = buildTransitNetworkIndex({
+      inventory: ccInventory,
+      networkDate: SEARCH_DATE,
+      busServices: {},
+      busFirstLast: {},
+    })
+
+    const cc5Plan = planBackwardLeads({
+      inventory: ccInventory,
+      networkIndex: network,
+      workplace: {
+        kind: 'station',
+        stationId: 'CC5',
+        label: 'CC5 Nicoll Highway',
+        point: { latitude: 1.299_671, longitude: 103.8635 },
+      },
+      constraints: { ...CONSTRAINTS, rideCapMinutes: 10 },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 50,
+    })
+    expect(cc5Plan.leads.find((l) => l.stop.id === 'CC3')?.transfers).toBe(0)
+
+    // CC3 -> CC4 -> CC10 -> CC34 is far longer than 5 minutes, whereas an invented CC3 -> CC4 -> CC34 shortcut would take ~3m
+    const cc34Plan = planBackwardLeads({
+      inventory: ccInventory,
+      networkIndex: network,
+      workplace: {
+        kind: 'station',
+        stationId: 'CC34',
+        label: 'CC34 Bayfront',
+        point: { latitude: 1.282_535, longitude: 103.859_73 },
+      },
+      constraints: { ...CONSTRAINTS, rideCapMinutes: 5 },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 50,
+    })
+    expect(cc34Plan.leads.map((l) => l.stop.id)).not.toContain('CC3')
+  })
 })

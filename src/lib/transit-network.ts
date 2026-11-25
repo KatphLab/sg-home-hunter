@@ -14,6 +14,8 @@ const RAIL_DEFAULT_WINDOW: OperatingWindow = { firstMin: 330, lastMin: 1435 }
 const MRT_HEADWAY_MS = 240_000
 const LRT_HEADWAY_MS = 300_000
 const BUS_HEADWAY_MS = 720_000
+const BUS_MAX_SPEED_MPS = 18
+const SERVICE_DAY_CUTOFF_MIN = 240
 const LINEAR_MRT_PREFIXES: readonly string[] = [
   'NS',
   'EW',
@@ -305,23 +307,44 @@ const parseHHMM = (raw: string): number | null => {
   return hours * 60 + minutes
 }
 
-const resolveWindowPair = (
+interface RawClockPair {
+  readonly firstMin: number
+  readonly lastMin: number
+}
+
+const parseRawClockPair = (
   firstRaw: string,
   lastRaw: string,
-  weekdayRef?: OperatingWindow,
-): OperatingWindow | undefined => {
+  weekdayRaw?: RawClockPair,
+): RawClockPair | undefined => {
   if (firstRaw === '-' || lastRaw === '-') {
     return undefined
   }
   const firstMin =
-    firstRaw === '=' ? (weekdayRef?.firstMin ?? null) : parseHHMM(firstRaw)
-  const rawLast =
-    lastRaw === '=' ? (weekdayRef?.lastMin ?? null) : parseHHMM(lastRaw)
-  if (firstMin === null || rawLast === null) {
+    firstRaw === '=' ? (weekdayRaw?.firstMin ?? null) : parseHHMM(firstRaw)
+  const lastMin =
+    lastRaw === '=' ? (weekdayRaw?.lastMin ?? null) : parseHHMM(lastRaw)
+  if (firstMin === null || lastMin === null) {
     return undefined
   }
-  const lastMin = rawLast < firstMin ? rawLast + 1440 : rawLast
   return { firstMin, lastMin }
+}
+
+const toOperatingWindow = (
+  raw: RawClockPair | undefined,
+): OperatingWindow | undefined => {
+  if (!raw) {
+    return undefined
+  }
+  if (
+    raw.firstMin < SERVICE_DAY_CUTOFF_MIN &&
+    raw.lastMin < SERVICE_DAY_CUTOFF_MIN &&
+    raw.firstMin <= raw.lastMin
+  ) {
+    return { firstMin: raw.firstMin + 1440, lastMin: raw.lastMin + 1440 }
+  }
+  const lastMin = raw.lastMin < raw.firstMin ? raw.lastMin + 1440 : raw.lastMin
+  return { firstMin: raw.firstMin, lastMin }
 }
 
 /** Parse one line from busrouter.sg firstlast.min.json into per-day-type operating windows. */
@@ -344,9 +367,12 @@ export const parseBusRouterFirstLastLine = (
   if (serviceId.length === 0) {
     return null
   }
-  const weekday = resolveWindowPair(wdF, wdL)
-  const saturday = resolveWindowPair(satF, satL, weekday)
-  const sunday = resolveWindowPair(sunF, sunL, weekday)
+  const weekdayRaw = parseRawClockPair(wdF, wdL)
+  const saturdayRaw = parseRawClockPair(satF, satL, weekdayRaw)
+  const sundayRaw = parseRawClockPair(sunF, sunL, weekdayRaw)
+  const weekday = toOperatingWindow(weekdayRaw)
+  const saturday = toOperatingWindow(saturdayRaw)
+  const sunday = toOperatingWindow(sundayRaw)
   const windows: Partial<Record<DayType, OperatingWindow>> = {}
   if (weekday) {
     windows.weekday = weekday
@@ -463,7 +489,7 @@ const computeBusSegmentTiming = (
 
   const physicalMinMs = Math.max(
     20_000,
-    Math.round((distM / 14) * 1000 + 10_000),
+    Math.round((distM / BUS_MAX_SPEED_MPS) * 1000 + 10_000),
   )
   const minRideMs = physicalMinMs
   const estRideMs =
@@ -666,14 +692,12 @@ const pushStemAndLoopRail = (
   orderedStops: readonly Stop[],
   hubStationId: string,
   isLrt: boolean,
-  includeClosedLoop: boolean,
 ): void => {
   const hubIndex = orderedStops.findIndex((s) => s.id === hubStationId)
   if (hubIndex < 0 || orderedStops.length <= hubIndex + 1) {
     pushBidirectionalRail(patterns, serviceId, orderedStops, isLrt)
     return
   }
-  const hub = orderedStops[hubIndex]
   const stem = orderedStops.slice(0, hubIndex + 1)
   const loopTail = orderedStops.slice(hubIndex + 1)
   const returnStem = [...stem].reverse()
@@ -695,14 +719,28 @@ const pushStemAndLoopRail = (
   if (rev) {
     patterns.push(rev)
   }
-  if (includeClosedLoop && hub) {
-    pushBidirectionalRail(
-      patterns,
-      `${serviceId}_LOOP`,
-      [hub, ...loopTail, hub],
-      isLrt,
-    )
+}
+
+const pushBranchAndLoopRail = (
+  patterns: TransitPattern[],
+  serviceId: string,
+  orderedStops: readonly Stop[],
+  hubStationId: string,
+  isLrt: boolean,
+): void => {
+  pushBidirectionalRail(patterns, serviceId, orderedStops, isLrt)
+  const hubIndex = orderedStops.findIndex((s) => s.id === hubStationId)
+  const hub = hubIndex >= 0 ? orderedStops[hubIndex] : undefined
+  if (!hub || orderedStops.length <= hubIndex + 1) {
+    return
   }
+  const loopTail = orderedStops.slice(hubIndex + 1)
+  pushBidirectionalRail(
+    patterns,
+    `${serviceId}_LOOP`,
+    [hub, ...loopTail, hub],
+    isLrt,
+  )
 }
 
 const buildLrtPatterns = (
@@ -716,7 +754,6 @@ const buildLrtPatterns = (
     collectByPrefix(railStops, 'BP'),
     'BP6',
     true,
-    false,
   )
 
   const loopSpecs: readonly {
@@ -753,13 +790,12 @@ const buildRailTopologyPatterns = (
     )
   }
 
-  pushStemAndLoopRail(
+  pushBranchAndLoopRail(
     patterns,
     'CC',
     collectByPrefix(railStops, 'CC'),
     'CC4',
     false,
-    true,
   )
 
   buildLrtPatterns(patterns, railStops, stopsById)
