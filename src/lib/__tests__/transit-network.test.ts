@@ -602,12 +602,42 @@ describe('transit-network', () => {
     expect(peakStops.has('CC32')).toBe(true)
     expect(peakStops.has('CC33')).toBe(false)
     expect(peakStops.has('CC34')).toBe(false)
-    expect(peakSpur[0]?.segments[0]?.operatingWindows).toEqual({
+    const outbound = peakSpur.find((p) => p.patternId.endsWith(':fwd'))
+    const inbound = peakSpur.find((p) => p.patternId.endsWith(':rev'))
+    expect(
+      outbound?.segments.find((s) => s.fromStopId === 'CC3')?.operatingWindows,
+    ).toEqual({
       weekday: [
-        { firstMin: 337, lastMin: 555 },
-        { firstMin: 1005, lastMin: 1225 },
+        { firstMin: 340, lastMin: 569 },
+        { firstMin: 964, lastMin: 1244 },
       ],
     })
+    // A train that passed CC3 at the cutoff still serves downstream stations.
+    const outboundCc8 = outbound?.segments.find((s) => s.fromStopId === 'CC8')
+    const outboundWindows = outboundCc8?.operatingWindows?.weekday
+    expect(Array.isArray(outboundWindows)).toBe(true)
+    if (Array.isArray(outboundWindows)) {
+      expect(outboundWindows[0]?.lastMin).toBeGreaterThan(569)
+    }
+    // Reverse service has its own estimated origin envelope and advances
+    // clockwise, not the CC3 outbound cutoff applied to every segment.
+    const inboundOrigin = inbound?.segments[0]?.operatingWindows?.weekday
+    const inboundCc8 = inbound?.segments.find((s) => s.fromStopId === 'CC8')
+    const inboundWindows = inboundCc8?.operatingWindows?.weekday
+    expect(Array.isArray(inboundOrigin)).toBe(true)
+    expect(Array.isArray(inboundWindows)).toBe(true)
+    if (Array.isArray(inboundOrigin) && Array.isArray(inboundWindows)) {
+      const elapsedMs = inbound?.segments
+        .slice(
+          0,
+          inbound.segments.findIndex((s) => s.fromStopId === 'CC8'),
+        )
+        .reduce((sum, s) => sum + s.estRideMs, 0)
+      expect(inboundWindows[0]?.lastMin).toBeCloseTo(
+        (inboundOrigin[0]?.lastMin ?? 0) + (elapsedMs ?? 0) / 60_000,
+      )
+      expect(inboundWindows[0]?.lastMin).toBeGreaterThan(569)
+    }
 
     for (const pattern of loop) {
       expect(pattern.isLoop).toBe(true)

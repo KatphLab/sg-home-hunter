@@ -177,6 +177,68 @@ describe('backward-planner', () => {
     expect(midLead?.estRideMs).toBe(20 * 60_000)
   })
 
+  it('keeps merged Pareto alternatives when a later label is dominated by an earlier bag entry', () => {
+    const branches: TransitPattern[] = (
+      [
+        [4, 8],
+        [6, 6],
+        [8, 10],
+      ] as const
+    ).map(([minRide, estRide], index) => ({
+      patternId: `branch-${index}`,
+      serviceId: `branch-${index}`,
+      serviceName: 'Branch',
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: 'MID_BUS',
+          toStopId: 'WP_STOP',
+          minRideMs: minRide * 60_000,
+          estRideMs: estRide * 60_000,
+          operatingWindows: { weekday: { firstMin: 530, lastMin: 540 } },
+        },
+      ],
+    }))
+    const trunk: TransitPattern = {
+      patternId: 'trunk',
+      serviceId: 'trunk',
+      serviceName: 'Trunk',
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: 'FAR_WEST',
+          toStopId: 'MID_BUS',
+          minRideMs: 60_000,
+          estRideMs: 60_000,
+        },
+      ],
+    }
+    const plan = (patterns: readonly TransitPattern[]) =>
+      planBackwardLeads({
+        inventory: INVENTORY,
+        networkIndex: {
+          version: 1,
+          networkDate: SEARCH_DATE,
+          inventoryDate: INVENTORY.inventoryDate,
+          provenance: [],
+          coveredStopIds: ['FAR_WEST', 'MID_BUS', 'WP_STOP'],
+          transfers: [],
+          patterns,
+        },
+        workplace: WP_GATE_WORKPLACE,
+        constraints: CONSTRAINTS,
+        maxFinalWalkMeters: 0,
+        maxTransfers: 1,
+      })
+    const baseline = plan([...branches.slice(0, 2), trunk])
+    expect(baseline.leads.some((lead) => lead.stop.id === 'FAR_WEST')).toBe(
+      true,
+    )
+    expect(plan([...branches, trunk])).toEqual(baseline)
+  })
+
   it('respects service dayType operating windows and pickup/drop-off flags', () => {
     const network = buildTransitNetworkIndex({
       inventory: INVENTORY,
@@ -269,6 +331,47 @@ describe('backward-planner', () => {
     const borderline = plan.leads.filter((l) => l.estRideMs > 4 * 60_000)
     expect(borderline).toHaveLength(1)
     expect(borderline[0]?.candidateDepartures.length).toBe(2)
+  })
+
+  it('preserves the best over-cap estimate and its borderline probes', () => {
+    const network: TransitNetworkIndex = {
+      version: 1,
+      networkDate: SEARCH_DATE,
+      inventoryDate: INVENTORY.inventoryDate,
+      provenance: [],
+      coveredStopIds: ['MID_BUS', 'WP_STOP'],
+      transfers: [],
+      patterns: [
+        { min: 5, est: 60 },
+        { min: 10, est: 31 },
+      ].map(({ min, est }) => ({
+        patternId: `borderline-${est}`,
+        serviceId: `B${est}`,
+        serviceName: `B${est}`,
+        mode: 'BUS',
+        headwayMs: 600_000,
+        segments: [
+          {
+            fromStopId: 'MID_BUS',
+            toStopId: 'WP_STOP',
+            minRideMs: min * 60_000,
+            estRideMs: est * 60_000,
+          },
+        ],
+      })),
+    }
+    const plan = planBackwardLeads({
+      inventory: INVENTORY,
+      networkIndex: network,
+      workplace: WP_GATE_WORKPLACE,
+      constraints: CONSTRAINTS,
+      maxTransfers: 0,
+    })
+
+    const lead = plan.leads.find((item) => item.stop.id === 'MID_BUS')
+    expect(lead?.minRideMs).toBe(5 * 60_000)
+    expect(lead?.estRideMs).toBe(31 * 60_000)
+    expect(lead?.candidateDepartures).toEqual(['08:19:30', '08:13:30'])
   })
 
   it('applies a 4-minute interchange walk floor for same-point non-matching rail stations and symmetric 4-probe bracketing', () => {
@@ -839,6 +942,85 @@ describe('backward-planner', () => {
     expect(bp1Lead?.transfers).toBe(0)
   })
 
+  it('keeps loop probes invariant under rotation without passing the alighting stop', () => {
+    const stops: Stop[] = ['A', 'B', 'C'].map((id, index) => ({
+      id,
+      kind: 'rail',
+      name: id,
+      point: { latitude: 1.3 + index * 0.01, longitude: 103.8 },
+    }))
+    const inventory: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops,
+    }
+    const planRoute = (
+      edges: readonly (readonly [string, string])[],
+      isLoop: boolean,
+    ) =>
+      planBackwardLeads({
+        inventory,
+        networkIndex: {
+          version: 1,
+          networkDate: SEARCH_DATE,
+          inventoryDate: inventory.inventoryDate,
+          provenance: [],
+          coveredStopIds: stops.map((stop) => stop.id),
+          transfers: [],
+          patterns: [
+            {
+              patternId: 'loop',
+              serviceId: 'loop',
+              serviceName: 'loop',
+              mode: 'RAIL',
+              headwayMs: 600_000,
+              isLoop,
+              segments: edges.map(([fromStopId, toStopId]) => ({
+                fromStopId,
+                toStopId,
+                minRideMs: 600_000,
+                estRideMs: 600_000,
+              })),
+            },
+          ],
+        },
+        workplace: {
+          kind: 'station',
+          stationId: 'A',
+          label: 'A',
+          point: { latitude: 1.3, longitude: 103.8 },
+        },
+        constraints: { ...CONSTRAINTS, rideCapMinutes: 40 },
+        maxTransfers: 0,
+        maxFinalWalkMeters: 0,
+      })
+    const direct = planRoute([['C', 'A']], false).leads[0]
+    expect(direct?.minRideMs).toBe(600_000)
+    const original = planRoute(
+      [
+        ['A', 'B'],
+        ['B', 'C'],
+        ['C', 'A'],
+      ],
+      true,
+    )
+    const rotated = planRoute(
+      [
+        ['C', 'A'],
+        ['A', 'B'],
+        ['B', 'C'],
+      ],
+      true,
+    )
+    for (const plan of [original, rotated]) {
+      expect(plan.leads.map((lead) => lead.stop.id)).not.toContain('A')
+      const cLead = plan.leads.find((lead) => lead.stop.id === 'C')
+      expect(cLead?.minRideMs).toBe(600_000)
+      expect(cLead?.estRideMs).toBe(600_000)
+      expect(cLead?.candidateDepartures).toEqual(direct?.candidateDepartures)
+    }
+    expect(original.leads).toEqual(rotated.leads)
+  })
+
   it('preserves expressway bus 858 95159 -> 65191 under a 12-minute ride cap', () => {
     const inv858: StopInventory = {
       inventoryDate: INVENTORY.inventoryDate,
@@ -1159,6 +1341,95 @@ describe('backward-planner', () => {
     expect(leadIds).toContain('16021')
     // 11181 is 23:58 on Sunday (before midnight) and must not bleed into Monday
     expect(leadIds).not.toContain('11181')
+  })
+
+  it('preserves sorted ride costs after multiple evictions regardless of pattern order', () => {
+    const stopIds = ['A1', 'A2', 'B', 'A3', 'U', 'Y', 'D']
+    const inventory: StopInventory = {
+      inventoryDate: INVENTORY.inventoryDate,
+      stops: stopIds.map((id, index) => ({
+        id,
+        kind: 'bus',
+        name: id,
+        point: { latitude: (130 + index) / 100, longitude: 103.8 },
+      })),
+    }
+    const downstream: TransitPattern[] = [
+      { id: 'A1', departure: 524, minRide: 5, estRide: 6 },
+      { id: 'A2', departure: 527, minRide: 5, estRide: 7 },
+      { id: 'B', departure: 532, minRide: 8, estRide: 8 },
+      { id: 'A3', departure: 528, minRide: 5, estRide: 5 },
+    ].map(({ id, departure, minRide, estRide }) => ({
+      patternId: id,
+      serviceId: id,
+      serviceName: id,
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: id,
+          toStopId: 'D',
+          minRideMs: minRide * 60_000,
+          estRideMs: estRide * 60_000,
+          operatingWindows: {
+            weekday: { firstMin: departure, lastMin: departure },
+          },
+        },
+      ],
+    }))
+    const upstream: TransitPattern = {
+      patternId: 'U',
+      serviceId: 'U',
+      serviceName: 'U',
+      mode: 'BUS',
+      headwayMs: 600_000,
+      segments: [
+        {
+          fromStopId: 'U',
+          toStopId: 'Y',
+          minRideMs: 6 * 60_000,
+          estRideMs: 6 * 60_000,
+        },
+      ],
+    }
+
+    for (const patterns of [
+      [...downstream, upstream],
+      [...downstream.slice(3), ...downstream.slice(0, 3), upstream],
+    ]) {
+      const network: TransitNetworkIndex = {
+        version: 1,
+        networkDate: SEARCH_DATE,
+        inventoryDate: inventory.inventoryDate,
+        provenance: [],
+        coveredStopIds: stopIds,
+        patterns,
+        transfers: ['A1', 'A2', 'B', 'A3'].map((toStopId) => ({
+          fromStopId: 'Y',
+          toStopId,
+          walkMs: 60_000,
+          minTransferWaitMs: 30_000,
+          estTransferWaitMs: 3 * 60_000,
+        })),
+      }
+      const plan = planBackwardLeads({
+        inventory,
+        networkIndex: network,
+        workplace: {
+          kind: 'postal',
+          postalCode: '820000',
+          label: 'D',
+          point: { latitude: 1.36, longitude: 103.8 },
+        },
+        constraints: { ...CONSTRAINTS, rideCapMinutes: 12 },
+        maxTransfers: 1,
+        maxFinalWalkMeters: 0,
+      })
+      const uLead = plan.leads.find((lead) => lead.stop.id === 'U')
+      expect(uLead?.minRideMs).toBe(11 * 60_000)
+      expect(uLead?.estRideMs).toBe(11 * 60_000)
+      expect(uLead?.transfers).toBe(1)
+    }
   })
 
   it('preserves ride-cost and boarding-time correlation instead of splicing early cost onto later departure', () => {
@@ -1503,6 +1774,61 @@ describe('backward-planner', () => {
     ).toBe(true)
   })
 
+  it('retains materially different departure estimates when feasible intervals partially overlap', () => {
+    const upstream: Stop = {
+      id: 'U',
+      kind: 'bus',
+      name: 'Stop U',
+      point: { latitude: 1.3, longitude: 103.7 },
+    }
+    const destination: Stop = { ...WP_GATE_STOP, id: 'D' }
+    const plan = planBackwardLeads({
+      inventory: {
+        inventoryDate: INVENTORY.inventoryDate,
+        stops: [upstream, destination],
+      },
+      networkIndex: {
+        version: 1,
+        networkDate: SEARCH_DATE,
+        inventoryDate: INVENTORY.inventoryDate,
+        provenance: [],
+        coveredStopIds: ['U', 'D'],
+        transfers: [],
+        patterns: (
+          [
+            [5, 10],
+            [12, 45],
+          ] as const
+        ).map<TransitPattern>(([minMinutes, estMinutes]) => ({
+          patternId: `ud-${estMinutes}`,
+          serviceId: `UD${estMinutes}`,
+          serviceName: `UD${estMinutes}`,
+          mode: 'BUS',
+          headwayMs: 600_000,
+          segments: [
+            {
+              fromStopId: 'U',
+              toStopId: 'D',
+              minRideMs: minMinutes * 60_000,
+              estRideMs: estMinutes * 60_000,
+            },
+          ],
+        })),
+      },
+      workplace: WP_GATE_WORKPLACE,
+      constraints: { ...CONSTRAINTS, rideCapMinutes: 45 },
+      maxTransfers: 0,
+      maxProbesPerStop: 4,
+    })
+
+    const departures = plan.leads.find(
+      (lead) => lead.stop.id === 'U',
+    )?.candidateDepartures
+    expect(departures).toHaveLength(4)
+    expect(departures).toContain('08:40:30')
+    expect(departures).toContain('08:05:30')
+  })
+
   it('carries Circle Line loop through CC4 in both directions with zero transfers', () => {
     const inventory = parseStopInventory(
       readFileSync('public/data/stops.tsv', 'utf8'),
@@ -1549,6 +1875,27 @@ describe('backward-planner', () => {
     const cc34Lead = toCc5.leads.find((l) => l.stop.id === 'CC34')
     expect(cc34Lead?.transfers).toBe(0)
     expect(cc34Lead?.minRideMs).toBeGreaterThan(120_000)
+
+    const beforeFirstLoop = planBackwardLeads({
+      inventory,
+      networkIndex: ccOnlyNetwork,
+      workplace: {
+        kind: 'station',
+        stationId: 'CC5',
+        label: 'CC5 Nicoll Highway',
+        point: cc5.point,
+      },
+      constraints: {
+        searchDate: '2026-11-26',
+        officeStart: '05:50',
+        rideCapMinutes: 15,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+    expect(beforeFirstLoop.leads.some((lead) => lead.stop.id === 'CC34')).toBe(
+      false,
+    )
 
     const toCc34 = planBackwardLeads({
       inventory,
@@ -1653,7 +2000,7 @@ describe('backward-planner', () => {
     expect(sundayDirect.leads.map((l) => l.stop.id)).not.toContain('CC3')
 
     // Weekday AM and PM peaks: CC3 -> CC8 is a direct spur ride
-    for (const officeStart of ['09:00', '18:30']) {
+    for (const officeStart of ['09:00', '09:40', '16:30', '18:30']) {
       const peakDirect = planBackwardLeads({
         inventory,
         networkIndex: ccOnlyNetwork,
@@ -1670,6 +2017,33 @@ describe('backward-planner', () => {
         0,
       )
     }
+
+    // The reverse peak envelope advances with the train, rather than ending
+    // every clockwise segment at the outbound CC3 09:29 cutoff.
+    const cc3 = inventory.stops.find((s) => s.id === 'CC3')
+    if (!cc3) {
+      throw new Error('Missing CC3')
+    }
+    const reversePeak = planBackwardLeads({
+      inventory,
+      networkIndex: ccOnlyNetwork,
+      workplace: {
+        kind: 'station',
+        stationId: 'CC3',
+        label: 'CC3 Esplanade',
+        point: cc3.point,
+      },
+      constraints: {
+        searchDate: '2026-11-26',
+        officeStart: '10:00',
+        rideCapMinutes: 20,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+    expect(reversePeak.leads.find((l) => l.stop.id === 'CC8')?.transfers).toBe(
+      0,
+    )
 
     // Weekday peak spur serves CC1 <-> CC32 via CC4->CC5->Bishan, never CC1 -> CC34 direct
     const cc1ToCc32 = planBackwardLeads({

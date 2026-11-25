@@ -1,4 +1,4 @@
-import { type BackwardLead, planBackwardLeads } from '@lib/backward-planner.js'
+import type { BackwardLead, BackwardPlanResult } from '@lib/backward-planner.js'
 import {
   createDestinationStationJourney,
   evaluateBoardings,
@@ -22,7 +22,6 @@ import {
   formatSingaporeTime,
   parseClockMinutes,
 } from '@lib/singapore-calendar.js'
-import type { TransitNetworkIndex } from '@lib/transit-network.js'
 
 const DEFAULT_MIN_INTERVAL_MS = 120
 const FALLBACK_STEP_MINUTES = 10
@@ -62,9 +61,9 @@ type RouteStopFn = (
   signal: AbortSignal,
 ) => Promise<readonly unknown[]>
 
-interface RunBackwardSearchOptions {
+export interface RunBackwardSearchOptions {
   readonly inventory: StopInventory
-  readonly networkIndex: TransitNetworkIndex
+  readonly plan: BackwardPlanResult | null
   readonly workplace: Workplace
   readonly constraints: SearchConstraints
   readonly routeStop: RouteStopFn
@@ -72,9 +71,6 @@ interface RunBackwardSearchOptions {
   readonly onProgress: (progress: SearchProgress) => void
   readonly minRequestIntervalMs?: number
   readonly delayFn?: DelayLike
-  readonly maxFinalWalkMeters?: number
-  readonly maxTransfers?: number
-  readonly maxProbesPerStop?: number
   readonly probeUncoveredStops?: boolean
 }
 
@@ -282,21 +278,8 @@ const flushQueuedHints = async (
 const buildAllLeads = (
   options: RunBackwardSearchOptions,
 ): readonly BackwardLead[] => {
-  const plan = planBackwardLeads({
-    inventory: options.inventory,
-    networkIndex: options.networkIndex,
-    workplace: options.workplace,
-    constraints: options.constraints,
-    ...(options.maxFinalWalkMeters !== undefined
-      ? { maxFinalWalkMeters: options.maxFinalWalkMeters }
-      : {}),
-    ...(options.maxTransfers !== undefined
-      ? { maxTransfers: options.maxTransfers }
-      : {}),
-    ...(options.maxProbesPerStop !== undefined
-      ? { maxProbesPerStop: options.maxProbesPerStop }
-      : {}),
-  })
+  const plan = options.plan
+  if (!plan) return []
 
   if (!options.probeUncoveredStops || plan.uncoveredStopIds.length === 0) {
     return plan.leads
@@ -354,7 +337,7 @@ const runVerificationPass = async (
   return flushQueuedHints(passNumber, options, tracker)
 }
 
-/** Run backward commute planning followed by targeted OneMap verification at the whole-search seam. */
+/** Verify the planned departures and any uncovered stops against OneMap. */
 export const runBackwardCommuteSearch = async (
   options: RunBackwardSearchOptions,
 ): Promise<SearchRunResult> => {
@@ -386,7 +369,7 @@ export const runBackwardCommuteSearch = async (
   )
   publishSnapshot(tracker, 1)
 
-  let status: 'completed' | 'partial' = 'completed'
+  let status: 'completed' | 'partial' = options.plan ? 'completed' : 'partial'
   for (let passIdx = 0; passIdx < maxPasses; passIdx += 1) {
     const outcome = await runVerificationPass(passIdx, leads, options, tracker)
     if (outcome === 'stop') {

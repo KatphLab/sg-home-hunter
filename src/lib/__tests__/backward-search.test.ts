@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'bun:test'
-import { runBackwardCommuteSearch } from '@lib/backward-search.js'
+import {
+  type PlanBackwardLeadsOptions,
+  planBackwardLeads,
+} from '@lib/backward-planner.js'
+import {
+  type RunBackwardSearchOptions,
+  runBackwardCommuteSearch as verifyDepartures,
+} from '@lib/backward-search.js'
 import type {
   SearchConstraints,
   StopInventory,
@@ -8,6 +15,10 @@ import type {
 import { OneMapAuthError } from '@lib/onemap-client.js'
 import { parseSingaporeDateTimeMs } from '@lib/singapore-calendar.js'
 import { buildTransitNetworkIndex } from '@lib/transit-network.js'
+
+const runBackwardCommuteSearch = (
+  options: PlanBackwardLeadsOptions & Omit<RunBackwardSearchOptions, 'plan'>,
+) => verifyDepartures({ ...options, plan: planBackwardLeads(options) })
 
 const SEARCH_DATE = '2026-11-26'
 const CONSTRAINTS: SearchConstraints = {

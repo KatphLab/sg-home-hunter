@@ -11,16 +11,18 @@ import {
   parseSingaporeDateTimeMs,
 } from '@lib/singapore-calendar.js'
 import {
-  type DayOperatingWindows,
-  type DayType,
   getServiceDayType,
   haversineDistanceMeters,
-  type OperatingWindow,
   type TransferLink,
   type TransitNetworkIndex,
   type TransitPattern,
-  type TransitSegment,
 } from '@lib/transit-network.js'
+import type {
+  DayOperatingWindows,
+  DayType,
+  OperatingWindow,
+  TransitSegment,
+} from '@lib/transit-segment.js'
 
 const ARRIVAL_WINDOW_EARLY_MS = 900_000
 const DEFAULT_MAX_FINAL_WALK_M = 1200
@@ -43,14 +45,14 @@ export interface BackwardLead {
   readonly transfers: number
 }
 
-interface BackwardPlanResult {
+export interface BackwardPlanResult {
   readonly leads: readonly BackwardLead[]
   readonly coveredStopCount: number
   readonly uncoveredStopIds: readonly string[]
   readonly prunedStopCount: number
 }
 
-interface PlanBackwardLeadsOptions {
+export interface PlanBackwardLeadsOptions {
   readonly inventory: StopInventory
   readonly networkIndex: TransitNetworkIndex
   readonly workplace: Workplace
@@ -91,28 +93,20 @@ type StopFrontier = Map<string, BackwardLabel[]>
 const isWithinSearchDay = (ms: number, ctx: PlannerContext): boolean =>
   ms >= ctx.dayStartMs && ms < ctx.dayEndMs
 
-const getDominanceEstRideMs = (
-  label: BackwardLabel,
-  rideCapMs: number,
-): number => (label.estRideMs > rideCapMs ? rideCapMs + 1 : label.estRideMs)
-
 const dominatesLabel = (
   existing: BackwardLabel,
   candidate: BackwardLabel,
-  rideCapMs: number,
   ignoreEarliest: boolean,
 ): boolean =>
   existing.transfers <= candidate.transfers &&
   existing.minRideMs <= candidate.minRideMs &&
-  getDominanceEstRideMs(existing, rideCapMs) <=
-    getDominanceEstRideMs(candidate, rideCapMs) &&
+  existing.estRideMs <= candidate.estRideMs &&
   existing.latestClockMs >= candidate.latestClockMs &&
   (ignoreEarliest || existing.earliestClockMs <= candidate.earliestClockMs)
 
 const findDominanceInsertPoint = (
   list: readonly BackwardLabel[],
   label: BackwardLabel,
-  rideCapMs: number,
   ignoreEarliest: boolean,
 ): { readonly insertPos: number; readonly startEvict: number } | null => {
   let i = 0
@@ -125,7 +119,7 @@ const findDominanceInsertPoint = (
     if (firstEq === -1 && ex.minRideMs === label.minRideMs) {
       firstEq = i
     }
-    if (dominatesLabel(ex, label, rideCapMs, ignoreEarliest)) {
+    if (dominatesLabel(ex, label, ignoreEarliest)) {
       return null
     }
     i += 1
@@ -136,10 +130,9 @@ const findDominanceInsertPoint = (
 const insertSortedLabel = (
   list: BackwardLabel[],
   label: BackwardLabel,
-  rideCapMs: number,
   ignoreEarliest: boolean,
 ): BackwardLabel | null => {
-  const point = findDominanceInsertPoint(list, label, rideCapMs, ignoreEarliest)
+  const point = findDominanceInsertPoint(list, label, ignoreEarliest)
   if (!point) {
     return null
   }
@@ -150,8 +143,8 @@ const insertSortedLabel = (
     if (!ex) {
       continue
     }
-    if (dominatesLabel(label, ex, rideCapMs, ignoreEarliest)) {
-      if (j < insertPos) {
+    if (dominatesLabel(label, ex, ignoreEarliest)) {
+      if (j < point.insertPos) {
         insertPos -= 1
       }
       continue
@@ -174,10 +167,10 @@ const insertSortedLabel = (
 const pushMonotonicLabel = (
   out: BackwardLabel[],
   label: BackwardLabel,
-  rideCapMs: number,
 ): void => {
-  for (const ex of out) {
-    if (dominatesLabel(ex, label, rideCapMs, false)) {
+  for (let i = out.length - 1; i >= 0; i -= 1) {
+    const ex = out[i]
+    if (ex && dominatesLabel(ex, label, false)) {
       return
     }
   }
@@ -188,7 +181,7 @@ const pushMonotonicLabel = (
   let writeIdx = tailStart
   for (let j = tailStart; j < out.length; j += 1) {
     const ex = out[j]
-    if (ex && !dominatesLabel(label, ex, rideCapMs, false)) {
+    if (ex && !dominatesLabel(label, ex, false)) {
       out[writeIdx] = ex
       writeIdx += 1
     }
@@ -202,14 +195,13 @@ const appendSortedTail = (
   source: readonly BackwardLabel[],
   startIdx: number,
   maxMinRideMs: number,
-  rideCapMs: number,
 ): void => {
   for (let i = startIdx; i < source.length; i += 1) {
     const item = source[i]
     if (!item || item.minRideMs > maxMinRideMs) {
       break
     }
-    pushMonotonicLabel(out, item, rideCapMs)
+    pushMonotonicLabel(out, item)
   }
 }
 
@@ -217,7 +209,6 @@ const mergeSortedBags = (
   bag: readonly BackwardLabel[],
   entering: readonly BackwardLabel[],
   maxMinRideMs: number,
-  rideCapMs: number,
 ): BackwardLabel[] => {
   const out: BackwardLabel[] = []
   let ia = 0
@@ -229,22 +220,21 @@ const mergeSortedBags = (
       break
     }
     if (a.minRideMs <= b.minRideMs) {
-      pushMonotonicLabel(out, a, rideCapMs)
+      pushMonotonicLabel(out, a)
       ia += 1
     } else {
-      pushMonotonicLabel(out, b, rideCapMs)
+      pushMonotonicLabel(out, b)
       ib += 1
     }
   }
-  appendSortedTail(out, bag, ia, maxMinRideMs, rideCapMs)
-  appendSortedTail(out, entering, ib, maxMinRideMs, rideCapMs)
+  appendSortedTail(out, bag, ia, maxMinRideMs)
+  appendSortedTail(out, entering, ib, maxMinRideMs)
   return out
 }
 
 const insertFrontierLabel = (
   frontier: StopFrontier,
   label: BackwardLabel,
-  rideCapMs: number,
   ignoreEarliest = false,
 ): BackwardLabel | null => {
   const list = frontier.get(label.stopId)
@@ -252,7 +242,7 @@ const insertFrontierLabel = (
     frontier.set(label.stopId, [label])
     return label
   }
-  return insertSortedLabel(list, label, rideCapMs, ignoreEarliest)
+  return insertSortedLabel(list, label, ignoreEarliest)
 }
 
 const computeFinalWalkBounds = (
@@ -334,7 +324,7 @@ const seedFinalWalkLabels = (
   for (const stop of inventory.stops) {
     const label = createSeedLabel(stop, workplace, ctx, maxFinalWalkMeters)
     if (label) {
-      insertFrontierLabel(seeds, label, ctx.rideCapMs)
+      insertFrontierLabel(seeds, label)
     }
   }
   return seeds
@@ -409,12 +399,11 @@ const appendSteppedBagLabel = (
   nextBag: BackwardLabel[],
   stepped: BackwardLabel,
   singleInterval: boolean,
-  rideCapMs: number,
 ): void => {
   if (singleInterval) {
-    pushMonotonicLabel(nextBag, stepped, rideCapMs)
+    pushMonotonicLabel(nextBag, stepped)
   } else {
-    insertSortedLabel(nextBag, stepped, rideCapMs, false)
+    insertSortedLabel(nextBag, stepped, false)
   }
 }
 
@@ -457,9 +446,9 @@ const stepLabelAcrossSegment = (
       transfers: round,
     }
     if (nextBag) {
-      appendSteppedBagLabel(nextBag, stepped, singleInterval, ctx.rideCapMs)
+      appendSteppedBagLabel(nextBag, stepped, singleInterval)
     }
-    recordUpdatedLabel(stepped, tracker, ctx.rideCapMs)
+    recordUpdatedLabel(stepped, tracker)
   }
 }
 
@@ -471,16 +460,10 @@ interface FrontierTracker {
 const recordUpdatedLabel = (
   label: BackwardLabel,
   tracker: FrontierTracker,
-  rideCapMs: number,
 ): void => {
-  const recorded = insertFrontierLabel(
-    tracker.boardedFrontiers,
-    label,
-    rideCapMs,
-    false,
-  )
+  const recorded = insertFrontierLabel(tracker.boardedFrontiers, label, false)
   if (recorded && tracker.updatedStops) {
-    insertFrontierLabel(tracker.updatedStops, recorded, rideCapMs, true)
+    insertFrontierLabel(tracker.updatedStops, recorded, true)
   }
 }
 
@@ -521,7 +504,7 @@ const prepareSegmentBag = (
   }
   const entering = roundInput.get(seg.toStopId)
   return entering
-    ? mergeSortedBags(activeBag, entering, maxInputMinRide, ctx.rideCapMs)
+    ? mergeSortedBags(activeBag, entering, maxInputMinRide)
     : activeBag
 }
 
@@ -531,10 +514,7 @@ const relaxPatternPass = (
   roundInput: StopFrontier,
   tracker: FrontierTracker,
   ctx: PlannerContext,
-): {
-  readonly bag: BackwardLabel[]
-  readonly prevFromStopId: string | undefined
-} => {
+): void => {
   let bag: BackwardLabel[] = []
   let prevFromStopId: string | undefined
   for (let i = pattern.segments.length - 1; i >= 0; i -= 1) {
@@ -548,32 +528,47 @@ const relaxPatternPass = (
       continue
     }
     const needNextBag =
-      i > 0
-        ? pattern.segments[i - 1]?.toStopId === seg.fromStopId
-        : Boolean(pattern.isLoop)
+      i > 0 && pattern.segments[i - 1]?.toStopId === seg.fromStopId
     bag = stepBagAcrossSegment(bag, seg, round, needNextBag, tracker, ctx)
   }
-  return { bag, prevFromStopId }
 }
 
 const relaxLoopWrapPass = (
   pattern: TransitPattern,
-  initialBag: BackwardLabel[],
-  initialPrevFromStopId: string | undefined,
+  alightIndex: number,
+  initialBag: readonly BackwardLabel[],
   round: number,
   tracker: FrontierTracker,
   ctx: PlannerContext,
 ): void => {
   let bag = initialBag
-  let prevFromStopId = initialPrevFromStopId
-  for (let i = pattern.segments.length - 1; i >= 1 && bag.length > 0; i -= 1) {
+  const alightStopId = pattern.segments[alightIndex]?.toStopId
+  let prevFromStopId = alightStopId
+  // Keep each alighting bag separate: merging origins loses where a ride must end.
+  for (
+    let step = 0;
+    step < pattern.segments.length && bag.length > 0;
+    step += 1
+  ) {
+    const i =
+      (alightIndex - step + pattern.segments.length) % pattern.segments.length
     const seg = pattern.segments[i]
-    if (!seg || seg.toStopId !== prevFromStopId) {
+    if (
+      !seg ||
+      seg.toStopId !== prevFromStopId ||
+      seg.fromStopId === alightStopId
+    ) {
       break
     }
     prevFromStopId = seg.fromStopId
+    const next =
+      pattern.segments[
+        (i + pattern.segments.length - 1) % pattern.segments.length
+      ]
     const needNextBag =
-      i > 1 && pattern.segments[i - 1]?.toStopId === seg.fromStopId
+      step + 1 < pattern.segments.length &&
+      next?.toStopId === seg.fromStopId &&
+      next.fromStopId !== alightStopId
     bag = stepBagAcrossSegment(bag, seg, round, needNextBag, tracker, ctx)
   }
 }
@@ -585,15 +580,16 @@ const relaxEstimatedPattern = (
   tracker: FrontierTracker,
   ctx: PlannerContext,
 ): void => {
-  const { bag, prevFromStopId } = relaxPatternPass(
-    pattern,
-    round,
-    roundInput,
-    tracker,
-    ctx,
-  )
-  if (pattern.isLoop && bag.length > 0 && pattern.segments.length >= 2) {
-    relaxLoopWrapPass(pattern, bag, prevFromStopId, round, tracker, ctx)
+  if (!pattern.isLoop) {
+    relaxPatternPass(pattern, round, roundInput, tracker, ctx)
+    return
+  }
+  for (let i = pattern.segments.length - 1; i >= 0; i -= 1) {
+    const seg = pattern.segments[i]
+    const entering = seg && roundInput.get(seg.toStopId)
+    if (entering) {
+      relaxLoopWrapPass(pattern, i, entering, round, tracker, ctx)
+    }
   }
 }
 
@@ -642,19 +638,13 @@ const addShiftedTransfer = (
   shifted: BackwardLabel | null,
   transferFrontiers: StopFrontier,
   nextInput: StopFrontier,
-  rideCapMs: number,
 ): void => {
   if (!shifted) {
     return
   }
-  const recorded = insertFrontierLabel(
-    transferFrontiers,
-    shifted,
-    rideCapMs,
-    true,
-  )
+  const recorded = insertFrontierLabel(transferFrontiers, shifted, true)
   if (recorded) {
-    insertFrontierLabel(nextInput, recorded, rideCapMs, true)
+    insertFrontierLabel(nextInput, recorded, true)
   }
 }
 
@@ -678,7 +668,6 @@ const propagateTransfersForLabel = (
     ),
     transferFrontiers,
     nextInput,
-    ctx.rideCapMs,
   )
   for (const link of links) {
     addShiftedTransfer(
@@ -693,7 +682,6 @@ const propagateTransfersForLabel = (
       ),
       transferFrontiers,
       nextInput,
-      ctx.rideCapMs,
     )
   }
 }
@@ -763,7 +751,19 @@ const selectDistinctWindowAnchors = (
     if (!label || (primaryEstOk && label.estRideMs > rideCapMs)) {
       continue
     }
-    if (anchors.every((anchor) => areIntervalsDisjoint(label, anchor))) {
+    // Keep distinct service windows. Inside overlapping windows, don't spend
+    // a better journey's brackets on a longer transfer chain or a worse
+    // over-cap estimate; split them between comparably ranked departures.
+    if (
+      anchors.every(
+        (anchor) =>
+          areIntervalsDisjoint(label, anchor) ||
+          (primaryEstOk &&
+            label.transfers === anchor.transfers &&
+            Math.abs(label.estClockMs - anchor.estClockMs) >
+              2 * BRACKET_OFFSET_MS),
+      )
+    ) {
       anchors.push(label)
     }
   }

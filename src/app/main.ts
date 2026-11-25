@@ -1,10 +1,6 @@
 import { filterRailStations, parseStopInventory } from '@lib/inventory.js'
 import { loadCompletedResult } from '@lib/saved-result-store.js'
 import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
-import {
-  buildTransitNetworkIndex,
-  parseBusNetworkTsv,
-} from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'
 import {
   collectAppElements,
@@ -98,7 +94,7 @@ const bootstrap = async (): Promise<void> => {
   const els = collectAppElements()
   const state: AppState = {
     inventory: null,
-    networkIndex: null,
+    networkText: null,
     account: null,
     workplace: null,
     matches: [],
@@ -146,15 +142,8 @@ const bootstrap = async (): Promise<void> => {
       networkResponse.text(),
     ])
     const inventory = parseStopInventory(stopsText)
-    const busNetwork = parseBusNetworkTsv(networkText)
-    const networkIndex = buildTransitNetworkIndex({
-      inventory,
-      networkDate: busNetwork.networkDate,
-      busServices: busNetwork.busServices,
-      busFirstLast: busNetwork.busFirstLast,
-    })
     state.inventory = inventory
-    state.networkIndex = networkIndex
+    state.networkText = networkText
     renderInventorySummary(els, inventory, getDefaultSearchDate(Date.now()))
     renderStationOptions(
       els.stationSelect,

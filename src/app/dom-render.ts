@@ -178,12 +178,13 @@ export const renderInventorySummary = (
 
 export const renderStatusBadge = (
   tag: HTMLElement,
-  mode: SearchResultStatus | 'saved' | 'idle',
+  mode: SearchResultStatus | 'saved' | 'idle' | 'planning',
   passNumber?: number,
   totalPasses?: number,
 ): void => {
   const labelMap: Readonly<Record<typeof mode, string>> = {
     idle: 'No search yet',
+    planning: 'Planning departures',
     running: `Searching — Pass ${String(passNumber ?? 1)} of ${String(totalPasses ?? 1)}`,
     partial: 'Partial result',
     completed: 'Completed',
@@ -191,6 +192,7 @@ export const renderStatusBadge = (
   }
   const classMap: Readonly<Record<typeof mode, string>> = {
     idle: 'status-tag status-tag--muted',
+    planning: 'status-tag status-tag--running',
     running: 'status-tag status-tag--running',
     partial: 'status-tag status-tag--partial',
     completed: 'status-tag status-tag--ok',

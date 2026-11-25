@@ -19,7 +19,6 @@ import {
 } from '@lib/onemap-client.js'
 import { saveCompletedResult } from '@lib/saved-result-store.js'
 import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
-import type { TransitNetworkIndex } from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'
 import {
   type AppElements,
@@ -34,10 +33,12 @@ import {
   renderStatusBadge,
 } from './dom-render.js'
 import type { CommuteMapView } from './map-view.js'
+import { planInWorker } from './plan-in-worker.js'
+import type { PlannerRequest } from './planner-worker.js'
 
 export interface AppState {
   inventory: StopInventory | null
-  networkIndex: TransitNetworkIndex | null
+  networkText: string | null
   account: OneMapAccount | null
   workplace: Workplace | null
   matches: readonly QualifiedStop[]
@@ -61,7 +62,7 @@ export const syncConnectivity = (ctx: AppContext): void => {
     online &&
     state.account !== null &&
     state.inventory !== null &&
-    state.networkIndex !== null &&
+    state.networkText !== null &&
     !state.isSearching
   renderConnectivityState(els, online, canStart)
 }
@@ -266,11 +267,48 @@ export const stopActiveSearch = (ctx: AppContext): void => {
   ctx.state.abortController?.abort()
 }
 
-export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
+const beginSearch = async (
+  ctx: AppContext,
+  request: PlannerRequest,
+  controller: AbortController,
+) => {
   const { els, mapView, state } = ctx
+  const { workplace, constraints } = request
+  state.isSearching = true
+  state.abortController = controller
+  state.workplace = workplace
+  state.matches = []
+  els.stopSearchButton.hidden = false
+  syncConnectivity(ctx)
+  mapView.clearStops()
+  mapView.setWorkplace(workplace)
+  renderConstraintsSummary(
+    els,
+    workplace,
+    constraints.searchDate,
+    constraints.officeStart,
+    constraints.rideCapMinutes,
+  )
+  selectStop(ctx, null)
+  renderStatusBadge(els.resultStatusTag, 'planning')
+  els.liveStatusRegion.textContent = 'Planning departure times.'
+  renderCounters(els, 0, request.inventory.stops.length, 0)
+  try {
+    return await planInWorker(request, controller.signal)
+  } catch (error) {
+    renderInlineError(
+      els.searchError,
+      `Could not plan departures: ${normalizeError(error, 'Planner unavailable').message}`,
+    )
+    return null
+  }
+}
+
+export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
+  const { els, state } = ctx
   if (
     !state.inventory ||
-    !state.networkIndex ||
+    state.networkText === null ||
     !state.account ||
     state.isSearching
   ) {
@@ -316,29 +354,21 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   }
 
   const controller = new AbortController()
-  state.isSearching = true
-  state.abortController = controller
-  state.workplace = workplace
-  state.matches = []
-  els.stopSearchButton.hidden = false
-  syncConnectivity(ctx)
-
-  mapView.clearStops()
-  mapView.setWorkplace(workplace)
-  renderConstraintsSummary(
-    els,
-    workplace,
-    searchDate,
-    officeStart,
-    rideCapMinutes,
-  )
-  selectStop(ctx, null)
-
   const constraints = { searchDate, officeStart, rideCapMinutes }
   const account = state.account
+  const plan = await beginSearch(
+    ctx,
+    {
+      inventory: state.inventory,
+      networkText: state.networkText,
+      workplace,
+      constraints,
+    },
+    controller,
+  )
   const result = await runBackwardCommuteSearch({
     inventory: state.inventory,
-    networkIndex: state.networkIndex,
+    plan,
     workplace,
     constraints,
     probeUncoveredStops: true,

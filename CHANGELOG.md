@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-26
+
+- Keep Stop available while a browser worker plans departures. Stopping during planning leaves the last completed offline search intact.
+- Preserve feasible feeder rides after equal-cost replacements, retain better over-cap estimates and probe materially different departure times even when their feasible windows overlap.
+- Bound each loop ride at its alighting stop and use station- and direction-specific Circle Line first trains and weekday spur windows.
+
 ## 2026-11-25
 
 - Align local quality gates and agent docs with CI: add non-short-circuiting `scripts/check-all.ts` (including `build`), add CI-matching `bun run semgrep`, disable Biome `noUnnecessaryConditions` due to its conflict with TypeScript `noUncheckedIndexedAccess`, ignore `.scratch/` cache artifacts, warn on oversized `src/` modules in `dangerfile.ts`, and deduplicate `AGENTS.md`.
