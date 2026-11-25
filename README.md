@@ -30,24 +30,25 @@ Open `http://127.0.0.1:3000/` in a browser (set `PORT=4173` to override). All PW
 
 ## Commands
 
-| Command                     | Purpose                                                                                       |
-| --------------------------- | --------------------------------------------------------------------------------------------- |
-| `bun run dev`               | Build PWA assets and run the static server with Bun's watcher                                 |
-| `bun run build:pwa`         | Bundle browser TypeScript/Service Worker and copy `public/` + `leaflet.css` to `dist/public/` |
-| `bun run build`             | Typecheck, build PWA assets, and bundle the Bun static server into `dist/`                    |
-| `bun run start`             | Serve `dist/public/` via `dist/index.js`                                                      |
-| `bun run inventory:refresh` | Refresh `public/data/stops.tsv` from BusRouter SG and SGRailData                              |
-| `bun run lint`              | Biome formatting, linting, accessibility, and import checks; warnings fail                    |
-| `bun run fix`               | Apply Biome fixes, then Knip fixes                                                            |
-| `bun run typecheck`         | Strict TypeScript checking without emitting files                                             |
-| `bun run test`              | Run Bun's built-in unit test runner                                                           |
-| `bun run test:ci`           | Run Bun unit tests with 90% line and function coverage gates                                  |
-| `bun run test:e2e`          | Build and run Playwright Chromium browser acceptance tests (`e2e/`)                           |
-| `bun run depcruise`         | Enforce dependency and architecture boundaries                                                |
-| `bun run knip`              | Detect unused files, exports, and dependencies                                                |
-| `bun run dupcheck`          | Reject duplication above 1%                                                                   |
-| `bun run check`             | Run all six local quality gates                                                               |
-| `bun run danger:ci`         | Enforce PR size and generated-artifact policies in GitHub CI                                  |
+| Command                      | Purpose                                                                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `bun run dev`                | Build PWA assets and run the static server with Bun's watcher                                                                |
+| `bun run build:pwa`          | Bundle browser TypeScript/Service Worker and copy `public/` + `leaflet.css` to `dist/public/`                                |
+| `bun run build`              | Typecheck, build PWA assets, and bundle the Bun static server into `dist/`                                                   |
+| `bun run start`              | Serve `dist/public/` via `dist/index.js`                                                                                     |
+| `bun run inventory:refresh`  | Refresh `public/data/stops.tsv` from BusRouter SG and SGRailData                                                             |
+| `bun run benchmark:backward` | Run live (`--mode live`) or credential-free replay (`--mode replay`) benchmarks for the standalone backward-search prototype |
+| `bun run lint`               | Biome formatting, linting, accessibility, and import checks; warnings fail                                                   |
+| `bun run fix`                | Apply Biome fixes, then Knip fixes                                                                                           |
+| `bun run typecheck`          | Strict TypeScript checking without emitting files                                                                            |
+| `bun run test`               | Run Bun's built-in unit test runner                                                                                          |
+| `bun run test:ci`            | Run Bun unit tests with 90% line and function coverage gates                                                                 |
+| `bun run test:e2e`           | Build and run Playwright Chromium browser acceptance tests (`e2e/`)                                                          |
+| `bun run depcruise`          | Enforce dependency and architecture boundaries                                                                               |
+| `bun run knip`               | Detect unused files, exports, and dependencies                                                                               |
+| `bun run dupcheck`           | Reject duplication above 1%                                                                                                  |
+| `bun run check`              | Run all six local quality gates                                                                                              |
+| `bun run danger:ci`          | Enforce PR size and generated-artifact policies in GitHub CI                                                                 |
 
 ## Deployment (Cloudflare Pages)
 
