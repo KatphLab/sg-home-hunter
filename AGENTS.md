@@ -1,7 +1,7 @@
 ## Workflow
 
 - Use Bun only for package management and repository scripts: `bun install`, `bun run <script>`, and `bunx --no-install <tool>`.
-- Work on a descriptive feature branch rather than `main`; use `.worktrees/` for isolated worktrees.
+- Work on a descriptive feature branch rather than `main`, using the current worktree by default. Create an isolated worktree under `.worktrees/` only when required for parallel work or to preserve unrelated local changes.
 - Use focused `<type>(<scope>): <why>` commits.
 
 ## Protected tooling
