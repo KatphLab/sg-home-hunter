@@ -105,8 +105,7 @@ describe('backward-planner', () => {
   })
 
   it('preserves Pareto-distinct timing vs ride-time alternatives', () => {
-    // Pattern FAST arrives too early (08:30, 5 min ride -> misses 08:45..09:00 window)
-    // Pattern SLOWER arrives inside window (08:50, 20 min ride -> qualifies)
+    // Pattern FAST only runs after 08:50 when combined ride exceeds remaining window, while SLOWER operates in-window
     const network: TransitNetworkIndex = {
       version: 1,
       networkDate: SEARCH_DATE,
@@ -120,29 +119,16 @@ describe('backward-planner', () => {
           serviceId: 'F1',
           serviceName: 'F1',
           mode: 'BUS',
-          timingKind: 'scheduled',
-          headwayMs: 0,
-          segments: [],
-          scheduledTrips: [
+          headwayMs: 600_000,
+          segments: [
             {
-              tripId: 'T_FAST',
-              dayTypes: ['weekday'],
-              stops: [
-                {
-                  stopId: 'MID_BUS',
-                  arrivalMs: (8 * 60 + 25) * 60_000,
-                  departureMs: (8 * 60 + 25) * 60_000,
-                  pickupAllowed: true,
-                  dropOffAllowed: true,
-                },
-                {
-                  stopId: 'WP_STOP',
-                  arrivalMs: (8 * 60 + 30) * 60_000,
-                  departureMs: (8 * 60 + 30) * 60_000,
-                  pickupAllowed: true,
-                  dropOffAllowed: true,
-                },
-              ],
+              fromStopId: 'MID_BUS',
+              toStopId: 'WP_STOP',
+              minRideMs: 28 * 60_000,
+              estRideMs: 28 * 60_000,
+              operatingWindows: {
+                weekday: { firstMin: 530, lastMin: 560 },
+              },
             },
           ],
         },
@@ -151,29 +137,13 @@ describe('backward-planner', () => {
           serviceId: 'S1',
           serviceName: 'S1',
           mode: 'BUS',
-          timingKind: 'scheduled',
-          headwayMs: 0,
-          segments: [],
-          scheduledTrips: [
+          headwayMs: 600_000,
+          segments: [
             {
-              tripId: 'T_SLOW',
-              dayTypes: ['weekday'],
-              stops: [
-                {
-                  stopId: 'MID_BUS',
-                  arrivalMs: (8 * 60 + 30) * 60_000,
-                  departureMs: (8 * 60 + 30) * 60_000,
-                  pickupAllowed: true,
-                  dropOffAllowed: true,
-                },
-                {
-                  stopId: 'WP_STOP',
-                  arrivalMs: (8 * 60 + 50) * 60_000,
-                  departureMs: (8 * 60 + 50) * 60_000,
-                  pickupAllowed: true,
-                  dropOffAllowed: true,
-                },
-              ],
+              fromStopId: 'MID_BUS',
+              toStopId: 'WP_STOP',
+              minRideMs: 15 * 60_000,
+              estRideMs: 20 * 60_000,
             },
           ],
         },
@@ -189,8 +159,8 @@ describe('backward-planner', () => {
 
     const midLead = plan.leads.find((l) => l.stop.id === 'MID_BUS')
     expect(midLead).toBeDefined()
-    expect(midLead?.candidateDepartures).toContain('08:30:00')
-    expect(midLead?.isScheduled).toBe(true)
+    expect(midLead?.minRideMs).toBe(15 * 60_000)
+    expect(midLead?.estRideMs).toBe(20 * 60_000)
   })
 
   it('respects service dayType operating windows and pickup/drop-off flags', () => {
@@ -262,7 +232,6 @@ describe('backward-planner', () => {
           serviceId: 'B1',
           serviceName: 'B1',
           mode: 'BUS',
-          timingKind: 'estimated',
           headwayMs: 600_000,
           segments: [
             {
@@ -348,54 +317,5 @@ describe('backward-planner', () => {
     expect(times[1]).toBe((times[0] ?? 0) - 360)
     expect(times[2]).toBe((times[0] ?? 0) + 360)
     expect(Math.abs((times[3] ?? 0) - (times[0] ?? 0))).toBe(720)
-  })
-
-  it('enforces GTFS calendar start/end dates and calendar_dates add/remove exceptions', () => {
-    const network = buildTransitNetworkIndex({
-      inventory: {
-        inventoryDate: INVENTORY.inventoryDate,
-        stops: INVENTORY.stops.filter(
-          (s) => s.id === 'NE17' || s.id === 'NE18',
-        ),
-      },
-      networkDate: SEARCH_DATE,
-      busServices: {},
-      busFirstLast: {},
-      gtfsTrain: {
-        routesTxt:
-          'route_id,route_short_name,route_long_name,route_type\nNE,NE,North East Line,1\n',
-        calendarTxt:
-          'service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\nWD,1,1,1,1,1,0,0,20261101,20261130\n',
-        calendarDatesTxt:
-          'service_id,date,exception_type\nWD,20261126,2\nWD,20261128,1\n',
-        tripsTxt: 'route_id,service_id,trip_id,direction_id\nNE,WD,NE_T1,0\n',
-        stopTimesTxt:
-          'trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type\nNE_T1,08:45:00,08:45:00,NE17,1,0,0\nNE_T1,08:50:00,08:50:00,NE18,2,0,0\n',
-      },
-    })
-
-    const removedPlan = planBackwardLeads({
-      inventory: INVENTORY,
-      networkIndex: network,
-      workplace: POSTAL_WORKPLACE,
-      constraints: CONSTRAINTS, // 2026-11-26 removed via exception_type=2
-    })
-    expect(removedPlan.leads).toEqual([])
-
-    const addedPlan = planBackwardLeads({
-      inventory: INVENTORY,
-      networkIndex: network,
-      workplace: POSTAL_WORKPLACE,
-      constraints: { ...CONSTRAINTS, searchDate: '2026-11-28' }, // Saturday added via exception_type=1
-    })
-    expect(addedPlan.leads.map((l) => l.stop.id)).toEqual(['NE17'])
-
-    const outOfRangePlan = planBackwardLeads({
-      inventory: INVENTORY,
-      networkIndex: network,
-      workplace: POSTAL_WORKPLACE,
-      constraints: { ...CONSTRAINTS, searchDate: '2026-12-01' }, // after end_date
-    })
-    expect(outOfRangePlan.leads).toEqual([])
   })
 })

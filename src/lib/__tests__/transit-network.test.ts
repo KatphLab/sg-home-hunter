@@ -6,7 +6,6 @@ import {
   haversineDistanceMeters,
   parseBusNetworkTsv,
   parseBusRouterFirstLastLine,
-  parseGtfsTrainSchedule,
   serializeBusNetworkTsv,
 } from '@lib/transit-network.js'
 
@@ -142,75 +141,6 @@ describe('transit-network', () => {
     })
 
     expect(parseBusRouterFirstLastLine('bad')).toBeNull()
-  })
-
-  it('parses GTFS rail schedule CSVs including quoted fields, all route types, and calendar day types', () => {
-    const patterns = parseGtfsTrainSchedule(
-      {
-        routesTxt:
-          'route_id,route_short_name,route_long_name,route_type\n"NE","NE","North East Line",1\n"BP","BP","Bukit ""Panjang"" LRT",0\n"B1","B1","Bus",3\n"R1","R1","Rail",2\n',
-        calendarTxt:
-          'service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\nALL,1,1,1,1,1,1,1,20260101,20261231\n',
-        tripsTxt:
-          'route_id,service_id,trip_id,direction_id\nNE,ALL,NE_T1,0\nBP,ALL,BP_T1,0\nB1,ALL,B1_T1,0\nR1,ALL,R1_T1,0\n',
-        stopTimesTxt:
-          'trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type\nNE_T1,08:34:00,08:34:00,NE18,2,1,0\nNE_T1,08:30:00,08:30:30,NE17,1,0,1\nBP_T1,08:00:00,08:00:00,BP1,1,0,0\nBP_T1,08:05:00,08:05:00,BP6,2,0,0\nB1_T1,08:00:00,08:00:00,65009,1,0,0\nB1_T1,08:05:00,08:05:00,65729,2,0,0\nR1_T1,08:00:00,08:00:00,CC4,1,0,0\nR1_T1,08:05:00,08:05:00,CC34,2,0,0\n',
-      },
-      new Set(['NE17', 'NE18', 'BP1', 'BP6', '65009', '65729', 'CC4', 'CC34']),
-    )
-
-    expect(patterns).toHaveLength(4)
-    expect(patterns[0]).toMatchObject({
-      serviceId: 'NE',
-      mode: 'SUBWAY',
-      timingKind: 'scheduled',
-    })
-    expect(patterns.find((p) => p.serviceId === 'BP')?.mode).toBe('TRAM')
-    expect(patterns.find((p) => p.serviceId === 'B1')?.mode).toBe('BUS')
-    expect(patterns.find((p) => p.serviceId === 'R1')?.mode).toBe('RAIL')
-    const trip = patterns[0]?.scheduledTrips?.[0]
-    expect(trip?.dayTypes).toEqual(['weekday', 'saturday', 'sunday_holiday'])
-    expect(trip?.stops).toEqual([
-      {
-        stopId: 'NE17',
-        arrivalMs: 30_600_000,
-        departureMs: 30_630_000,
-        pickupAllowed: true,
-        dropOffAllowed: false,
-      },
-      {
-        stopId: 'NE18',
-        arrivalMs: 30_840_000,
-        departureMs: 30_840_000,
-        pickupAllowed: false,
-        dropOffAllowed: true,
-      },
-    ])
-
-    const withGtfs = buildTransitNetworkIndex({
-      inventory: MINI_INVENTORY,
-      networkDate: '2026-11-26',
-      busServices: {},
-      busFirstLast: {},
-      gtfsTrain: {
-        routesTxt:
-          'route_id,route_short_name,route_long_name,route_type\nNE,NE,North East Line,1\n',
-        calendarTxt:
-          'service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\nWD,1,1,1,1,1,0,0,20260101,20261231\n',
-        calendarDatesTxt:
-          'service_id,date,exception_type\nWD,20261126,2\nWD,20261128,1\n',
-        tripsTxt: 'route_id,service_id,trip_id,direction_id\nNE,WD,NE_T1,0\n',
-        stopTimesTxt:
-          'trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type\nNE_T1,08:30:00,08:30:00,NE17,1,0,0\nNE_T1,08:34:00,08:34:00,NE18,2,0,0\n',
-      },
-    })
-    expect(withGtfs.provenance.some((p) => p.timingKind === 'scheduled')).toBe(
-      true,
-    )
-    const gtfsTrip = withGtfs.patterns.find((p) => p.timingKind === 'scheduled')
-      ?.scheduledTrips?.[0]
-    expect(gtfsTrip?.removedDates).toEqual(['20261126'])
-    expect(gtfsTrip?.addedDates).toEqual(['20261128'])
   })
 
   it('builds directed bus patterns, rail topology including CC loop/LRT, and spatial transfer links', () => {

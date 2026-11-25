@@ -2,7 +2,7 @@
 
 ## 2026-11-25
 
-- Switch production PWA commute searches from the 19-pass breadth-first scheduler to the calibrated backward commute search (`runBackwardCommuteSearch`), cutting requests and search time substantially while keeping OneMap as the confirmation oracle.
+- Switch production PWA commute searches from the 19-pass breadth-first scheduler to the calibrated backward commute search (`runBackwardCommuteSearch`), cutting requests and search time substantially while keeping OneMap as the confirmation oracle; remove the obsolete scheduler and prototype benchmark harness.
 - Bundle compact BusRouter SG bus routes and first/last timings in `public/data/bus-network.tsv` (pre-cached by Service Worker `house-hunter-shell-v3`) and update `bun run inventory:refresh` to refresh both `stops.tsv` and `bus-network.tsv` together.
 - Reuse confirmed boarding points within each commute search and check promising intermediate departures without assuming that passengers can board there.
 

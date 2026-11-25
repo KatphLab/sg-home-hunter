@@ -29,7 +29,7 @@ interface NetworkProvenance {
   readonly source: string
   readonly version: string
   readonly license: string
-  readonly timingKind: 'scheduled' | 'first_last_estimated'
+  readonly timingKind: 'first_last_estimated'
 }
 
 interface OperatingWindow {
@@ -47,33 +47,13 @@ export interface TransitSegment {
   >
 }
 
-interface ScheduledStopTime {
-  readonly stopId: string
-  readonly arrivalMs: number
-  readonly departureMs: number
-  readonly pickupAllowed: boolean
-  readonly dropOffAllowed: boolean
-}
-
-export interface ScheduledTrip {
-  readonly tripId: string
-  readonly dayTypes: readonly DayType[]
-  readonly startDate?: string
-  readonly endDate?: string
-  readonly addedDates?: readonly string[]
-  readonly removedDates?: readonly string[]
-  readonly stops: readonly ScheduledStopTime[]
-}
-
 export interface TransitPattern {
   readonly patternId: string
   readonly serviceId: string
   readonly serviceName: string
   readonly mode: TransitMode
-  readonly timingKind: 'scheduled' | 'estimated'
   readonly headwayMs: number
   readonly segments: readonly TransitSegment[]
-  readonly scheduledTrips?: readonly ScheduledTrip[]
 }
 
 export interface TransferLink {
@@ -99,24 +79,15 @@ export interface BusRouterServiceEntry {
   readonly routes: readonly (readonly string[])[]
 }
 
-export interface GtfsScheduleFiles {
-  readonly routesTxt: string
-  readonly calendarTxt: string
-  readonly calendarDatesTxt?: string
-  readonly tripsTxt: string
-  readonly stopTimesTxt: string
-}
-
-export interface BuildTransitNetworkInput {
+interface BuildTransitNetworkInput {
   readonly inventory: StopInventory
   readonly networkDate: string
   readonly busServices: Readonly<Record<string, BusRouterServiceEntry>>
   readonly busFirstLast: Readonly<Record<string, readonly string[]>>
-  readonly gtfsTrain?: GtfsScheduleFiles
   readonly maxTransferWalkMeters?: number
 }
 
-export interface ParsedFirstLastEntry {
+interface ParsedFirstLastEntry {
   readonly serviceId: string
   readonly windows: Readonly<Partial<Record<DayType, OperatingWindow>>>
 }
@@ -379,343 +350,6 @@ export const parseBusRouterFirstLastLine = (
   return { serviceId, windows }
 }
 
-const splitCsvRow = (line: string): string[] => {
-  const cells: string[] = []
-  let current = ''
-  let inQuotes = false
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i]
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"'
-        i += 1
-      } else {
-        inQuotes = !inQuotes
-      }
-      continue
-    }
-    if (ch === ',' && !inQuotes) {
-      cells.push(current.trim())
-      current = ''
-      continue
-    }
-    current += ch
-  }
-  cells.push(current.trim())
-  return cells
-}
-
-const parseCsvRecords = (
-  rawCsv: string,
-): readonly Readonly<Record<string, string>>[] => {
-  const lines = rawCsv
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-  const headerLine = lines[0]
-  if (!headerLine) {
-    return []
-  }
-  const headers = splitCsvRow(headerLine)
-  const rows: Record<string, string>[] = []
-  for (let idx = 1; idx < lines.length; idx += 1) {
-    const values = splitCsvRow(lines[idx] ?? '')
-    const row: Record<string, string> = {}
-    for (let col = 0; col < headers.length; col += 1) {
-      const key = headers[col]
-      if (key) {
-        row[key] = values[col] ?? ''
-      }
-    }
-    rows.push(row)
-  }
-  return rows
-}
-
-const parseGtfsClockMs = (clock: string): number | null => {
-  const parts = clock.split(':')
-  if (parts.length !== 3) {
-    return null
-  }
-  const hours = Number(parts[0])
-  const minutes = Number(parts[1])
-  const seconds = Number(parts[2])
-  if (
-    !Number.isInteger(hours) ||
-    !Number.isInteger(minutes) ||
-    !Number.isInteger(seconds) ||
-    minutes < 0 ||
-    minutes > 59 ||
-    seconds < 0 ||
-    seconds > 59
-  ) {
-    return null
-  }
-  return (hours * 3600 + minutes * 60 + seconds) * 1000
-}
-
-interface CalendarScheduleEntry {
-  readonly dayTypes: readonly DayType[]
-  readonly startDate?: string
-  readonly endDate?: string
-  readonly addedDates: string[]
-  readonly removedDates: string[]
-}
-
-const recordExceptionRow = (
-  map: Map<string, CalendarScheduleEntry>,
-  row: Readonly<Record<string, string | undefined>>,
-): void => {
-  const serviceId = row['service_id'] ?? ''
-  const date = row['date'] ?? ''
-  const exc = row['exception_type'] ?? ''
-  if (serviceId.length === 0 || date.length !== 8) {
-    return
-  }
-  const entry = map.get(serviceId) ?? {
-    dayTypes: [],
-    addedDates: [],
-    removedDates: [],
-  }
-  if (exc === '1') {
-    entry.addedDates.push(date)
-  } else if (exc === '2') {
-    entry.removedDates.push(date)
-  }
-  map.set(serviceId, entry)
-}
-
-const applyCalendarExceptions = (
-  map: Map<string, CalendarScheduleEntry>,
-  calendarDatesTxt: string | undefined,
-): void => {
-  if (!calendarDatesTxt) {
-    return
-  }
-  for (const row of parseCsvRecords(calendarDatesTxt)) {
-    recordExceptionRow(map, row)
-  }
-}
-
-const extractCalendarDayTypes = (
-  row: Readonly<Record<string, string | undefined>>,
-): readonly DayType[] => {
-  const dayTypes: DayType[] = []
-  const hasWeekday =
-    row['monday'] === '1' ||
-    row['tuesday'] === '1' ||
-    row['wednesday'] === '1' ||
-    row['thursday'] === '1' ||
-    row['friday'] === '1'
-  if (hasWeekday) {
-    dayTypes.push('weekday')
-  }
-  if (row['saturday'] === '1') {
-    dayTypes.push('saturday')
-  }
-  if (row['sunday'] === '1') {
-    dayTypes.push('sunday_holiday')
-  }
-  return dayTypes
-}
-
-const parseCalendarEntries = (
-  calendarTxt: string,
-  calendarDatesTxt?: string,
-): ReadonlyMap<string, CalendarScheduleEntry> => {
-  const map = new Map<string, CalendarScheduleEntry>()
-  for (const row of parseCsvRecords(calendarTxt)) {
-    const serviceId = row['service_id'] ?? ''
-    if (serviceId.length === 0) {
-      continue
-    }
-    const startDate = row['start_date']
-    const endDate = row['end_date']
-    map.set(serviceId, {
-      dayTypes: extractCalendarDayTypes(row),
-      ...(startDate?.length === 8 ? { startDate } : {}),
-      ...(endDate?.length === 8 ? { endDate } : {}),
-      addedDates: [],
-      removedDates: [],
-    })
-  }
-  applyCalendarExceptions(map, calendarDatesTxt)
-  return map
-}
-
-const mapGtfsRouteMode = (routeType: string): TransitMode => {
-  if (routeType === '0') {
-    return 'TRAM'
-  }
-  if (routeType === '3') {
-    return 'BUS'
-  }
-  if (routeType === '2') {
-    return 'RAIL'
-  }
-  return 'SUBWAY'
-}
-
-interface RawStopTimeEntry {
-  readonly stopId: string
-  readonly sequence: number
-  readonly arrivalMs: number
-  readonly departureMs: number
-  readonly pickupAllowed: boolean
-  readonly dropOffAllowed: boolean
-}
-
-const groupStopTimesByTrip = (
-  stopTimesTxt: string,
-  validStopIds: ReadonlySet<string>,
-): ReadonlyMap<string, RawStopTimeEntry[]> => {
-  const grouped = new Map<string, RawStopTimeEntry[]>()
-  for (const row of parseCsvRecords(stopTimesTxt)) {
-    const tripId = row['trip_id'] ?? ''
-    const stopId = row['stop_id'] ?? ''
-    const seq = Number(row['stop_sequence'])
-    const arrivalMs = parseGtfsClockMs(row['arrival_time'] ?? '')
-    const departureMs = parseGtfsClockMs(row['departure_time'] ?? '')
-    if (
-      tripId.length === 0 ||
-      !validStopIds.has(stopId) ||
-      !Number.isFinite(seq) ||
-      arrivalMs === null ||
-      departureMs === null
-    ) {
-      continue
-    }
-    const list = grouped.get(tripId) ?? []
-    list.push({
-      stopId,
-      sequence: seq,
-      arrivalMs,
-      departureMs,
-      pickupAllowed: row['pickup_type'] !== '1',
-      dropOffAllowed: row['drop_off_type'] !== '1',
-    })
-    grouped.set(tripId, list)
-  }
-  for (const list of grouped.values()) {
-    list.sort((a, b) => a.sequence - b.sequence)
-  }
-  return grouped
-}
-
-const buildGtfsRouteMeta = (
-  routesTxt: string,
-): ReadonlyMap<
-  string,
-  { readonly name: string; readonly mode: TransitMode }
-> => {
-  const routeMeta = new Map<
-    string,
-    { readonly name: string; readonly mode: TransitMode }
-  >()
-  for (const row of parseCsvRecords(routesTxt)) {
-    const id = row['route_id'] ?? ''
-    if (id.length === 0) {
-      continue
-    }
-    const name = row['route_short_name'] ?? row['route_long_name'] ?? id
-    routeMeta.set(id, {
-      name: name.length > 0 ? name : id,
-      mode: mapGtfsRouteMode(row['route_type'] ?? '1'),
-    })
-  }
-  return routeMeta
-}
-
-interface PatternTripBucket {
-  readonly routeId: string
-  readonly dirId: string
-  readonly trips: ScheduledTrip[]
-}
-
-const buildScheduledTrip = (
-  tripId: string,
-  cal: CalendarScheduleEntry,
-  rawStops: readonly RawStopTimeEntry[],
-): ScheduledTrip => ({
-  tripId,
-  dayTypes: cal.dayTypes,
-  ...(cal.startDate ? { startDate: cal.startDate } : {}),
-  ...(cal.endDate ? { endDate: cal.endDate } : {}),
-  ...(cal.addedDates.length > 0 ? { addedDates: cal.addedDates } : {}),
-  ...(cal.removedDates.length > 0 ? { removedDates: cal.removedDates } : {}),
-  stops: rawStops.map((s) => ({
-    stopId: s.stopId,
-    arrivalMs: s.arrivalMs,
-    departureMs: s.departureMs,
-    pickupAllowed: s.pickupAllowed,
-    dropOffAllowed: s.dropOffAllowed,
-  })),
-})
-
-const groupGtfsTrips = (
-  tripsTxt: string,
-  calendarMap: ReadonlyMap<string, CalendarScheduleEntry>,
-  stopTimesByTrip: ReadonlyMap<string, RawStopTimeEntry[]>,
-): ReadonlyMap<string, PatternTripBucket> => {
-  const tripsByPattern = new Map<string, PatternTripBucket>()
-  for (const row of parseCsvRecords(tripsTxt)) {
-    const routeId = row['route_id'] ?? ''
-    const tripId = row['trip_id'] ?? ''
-    const cal = calendarMap.get(row['service_id'] ?? '')
-    const rawStops = stopTimesByTrip.get(tripId)
-    if (!cal || !rawStops || rawStops.length < 2) {
-      continue
-    }
-    if (cal.dayTypes.length === 0 && cal.addedDates.length === 0) {
-      continue
-    }
-    const dirId = row['direction_id'] ?? '0'
-    const key = `${routeId}:${dirId}`
-    const bucket = tripsByPattern.get(key) ?? { routeId, dirId, trips: [] }
-    bucket.trips.push(buildScheduledTrip(tripId, cal, rawStops))
-    tripsByPattern.set(key, bucket)
-  }
-  return tripsByPattern
-}
-
-/** Parse official GTFS train schedule files into scheduled transit patterns. */
-export const parseGtfsTrainSchedule = (
-  files: GtfsScheduleFiles,
-  validStopIds: ReadonlySet<string>,
-): readonly TransitPattern[] => {
-  const calendarMap = parseCalendarEntries(
-    files.calendarTxt,
-    files.calendarDatesTxt,
-  )
-  const routeMeta = buildGtfsRouteMeta(files.routesTxt)
-  const stopTimesByTrip = groupStopTimesByTrip(files.stopTimesTxt, validStopIds)
-  const tripsByPattern = groupGtfsTrips(
-    files.tripsTxt,
-    calendarMap,
-    stopTimesByTrip,
-  )
-
-  const defaultMode: TransitMode = 'SUBWAY'
-  const patterns: TransitPattern[] = []
-  for (const [key, bucket] of tripsByPattern.entries()) {
-    const meta = routeMeta.get(bucket.routeId) ?? {
-      name: bucket.routeId,
-      mode: defaultMode,
-    }
-    patterns.push({
-      patternId: `gtfs:${key}`,
-      serviceId: bucket.routeId,
-      serviceName: meta.name,
-      mode: meta.mode,
-      timingKind: 'scheduled',
-      headwayMs: MRT_HEADWAY_MS,
-      segments: [],
-      scheduledTrips: bucket.trips,
-    })
-  }
-  return patterns
-}
-
 const buildFirstLastLookup = (
   raw: Readonly<Record<string, readonly string[]>>,
 ): ReadonlyMap<
@@ -897,7 +531,6 @@ const buildSingleBusPattern = (
     serviceId,
     serviceName: serviceId,
     mode: 'BUS',
-    timingKind: 'estimated',
     headwayMs: BUS_HEADWAY_MS,
     segments,
   }
@@ -987,7 +620,6 @@ const makeRailPattern = (
     serviceId,
     serviceName: serviceId,
     mode: isLrt ? 'TRAM' : 'SUBWAY',
-    timingKind: 'estimated',
     headwayMs: isLrt ? LRT_HEADWAY_MS : MRT_HEADWAY_MS,
     segments,
   }
@@ -1170,11 +802,6 @@ const collectCoveredStops = (
       covered.add(seg.fromStopId)
       covered.add(seg.toStopId)
     }
-    for (const trip of pattern.scheduledTrips ?? []) {
-      for (const stopTime of trip.stops) {
-        covered.add(stopTime.stopId)
-      }
-    }
   }
   return [...covered].sort((a, b) => a.localeCompare(b))
 }
@@ -1184,14 +811,13 @@ export const buildTransitNetworkIndex = (
   input: BuildTransitNetworkInput,
 ): TransitNetworkIndex => {
   const stopsById = new Map(input.inventory.stops.map((s) => [s.id, s]))
-  const validStopIds = new Set(stopsById.keys())
   const firstLastLookup = buildFirstLastLookup(input.busFirstLast)
   const busPatterns = buildBusPatterns(
     stopsById,
     input.busServices,
     firstLastLookup,
   )
-
+  const railPatterns = buildRailTopologyPatterns(input.inventory, stopsById)
   const provenance: NetworkProvenance[] = [
     {
       source: 'data.busrouter.sg/v1 (services + firstlast)',
@@ -1199,27 +825,13 @@ export const buildTransitNetworkIndex = (
       license: 'LTA DataMall / Singapore Open Data Licence v1.0',
       timingKind: 'first_last_estimated',
     },
+    {
+      source: 'stops.tsv rail topology (cheeaun/sgraildata codes)',
+      version: input.inventory.inventoryDate,
+      license: 'SODL v1.0 / ODbL / CC BY-SA 4.0',
+      timingKind: 'first_last_estimated',
+    },
   ]
-
-  const railPatterns = input.gtfsTrain
-    ? parseGtfsTrainSchedule(input.gtfsTrain, validStopIds)
-    : buildRailTopologyPatterns(input.inventory, stopsById)
-
-  provenance.push(
-    input.gtfsTrain
-      ? {
-          source: 'LTA DataMall GTFSScheduleTrain',
-          version: input.networkDate,
-          license: 'Singapore Open Data Licence v1.0',
-          timingKind: 'scheduled',
-        }
-      : {
-          source: 'stops.tsv rail topology (cheeaun/sgraildata codes)',
-          version: input.inventory.inventoryDate,
-          license: 'SODL v1.0 / ODbL / CC BY-SA 4.0',
-          timingKind: 'first_last_estimated',
-        },
-  )
 
   const patterns = [...busPatterns, ...railPatterns]
   const transfers = buildTransferLinks(

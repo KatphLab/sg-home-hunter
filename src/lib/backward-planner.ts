@@ -14,7 +14,6 @@ import {
   type DayType,
   getServiceDayType,
   haversineDistanceMeters,
-  type ScheduledTrip,
   type TransferLink,
   type TransitNetworkIndex,
   type TransitPattern,
@@ -30,7 +29,6 @@ const SAME_STOP_MIN_WAIT_MS = 30_000
 const SAME_STOP_EST_WAIT_MS = 180_000
 const PRIMARY_FORWARD_BIAS_MS = 2 * 60_000
 const BRACKET_OFFSET_MS = 6 * 60_000
-const DISTINCT_BRANCH_GAP_MS = 10 * 60_000
 const INTERCHANGE_MIN_EST_WALK_MS = 240_000
 const INTERCHANGE_MIN_MAX_WALK_MS = 360_000
 const DAY_MINUTES_MS = 1440 * 60_000
@@ -41,18 +39,16 @@ export interface BackwardLead {
   readonly minRideMs: number
   readonly estRideMs: number
   readonly transfers: number
-  readonly isScheduled: boolean
 }
 
-export interface BackwardPlanResult {
+interface BackwardPlanResult {
   readonly leads: readonly BackwardLead[]
   readonly coveredStopCount: number
   readonly uncoveredStopIds: readonly string[]
   readonly prunedStopCount: number
-  readonly planElapsedMs: number
 }
 
-export interface PlanBackwardLeadsOptions {
+interface PlanBackwardLeadsOptions {
   readonly inventory: StopInventory
   readonly networkIndex: TransitNetworkIndex
   readonly workplace: Workplace
@@ -70,7 +66,6 @@ interface BackwardLabel {
   readonly latestClockMs: number
   readonly estClockMs: number
   readonly transfers: number
-  readonly isScheduled: boolean
   readonly hasBoardedTransit: boolean
 }
 
@@ -100,12 +95,6 @@ const isDominated = (
   ) {
     return false
   }
-  if (existing.isScheduled || candidate.isScheduled) {
-    return (
-      existing.earliestClockMs <= candidate.earliestClockMs &&
-      existing.latestClockMs >= candidate.latestClockMs
-    )
-  }
   return (
     Math.floor(existing.estClockMs / CLOCK_BUCKET_MS) ===
     Math.floor(candidate.estClockMs / CLOCK_BUCKET_MS)
@@ -121,10 +110,8 @@ const insertIntoLabelList = (
   for (const item of existing) {
     if (!absorbed && isDominated(label, item)) {
       const needsWiden =
-        !item.isScheduled &&
-        !label.isScheduled &&
-        (label.earliestClockMs < item.earliestClockMs ||
-          label.latestClockMs > item.latestClockMs)
+        label.earliestClockMs < item.earliestClockMs ||
+        label.latestClockMs > item.latestClockMs
       next.push(
         needsWiden
           ? {
@@ -234,7 +221,6 @@ const createSeedLabel = (
       latestClockMs,
     ),
     transfers: 0,
-    isScheduled: false,
     hasBoardedTransit: false,
   }
 }
@@ -298,7 +284,6 @@ const stepLabelAcrossSegment = (
       nextLatest,
     ),
     transfers: round,
-    isScheduled: false,
     hasBoardedTransit: true,
   }
 }
@@ -363,124 +348,6 @@ const relaxEstimatedPattern = (
   }
 }
 
-interface AlightingCandidate {
-  readonly index: number
-  readonly arrivalAbsMs: number
-  readonly minRideMs: number
-  readonly estRideMs: number
-}
-
-const collectTripAlightings = (
-  trip: ScheduledTrip,
-  roundInput: ReadonlyMap<string, readonly BackwardLabel[]>,
-  dayStartMs: number,
-): AlightingCandidate[] => {
-  const candidates: AlightingCandidate[] = []
-  for (let j = trip.stops.length - 1; j >= 1; j -= 1) {
-    const alighting = trip.stops[j]
-    const labels = alighting?.dropOffAllowed
-      ? roundInput.get(alighting.stopId)
-      : undefined
-    if (!alighting || !labels) {
-      continue
-    }
-    const arrivalAbsMs = dayStartMs + alighting.arrivalMs
-    for (const label of labels) {
-      if (
-        arrivalAbsMs >= label.earliestClockMs &&
-        arrivalAbsMs <= label.latestClockMs
-      ) {
-        candidates.push({
-          index: j,
-          arrivalAbsMs,
-          minRideMs: label.minRideMs,
-          estRideMs: label.estRideMs,
-        })
-      }
-    }
-  }
-  return candidates
-}
-
-const relaxScheduledTrip = (
-  trip: ScheduledTrip,
-  round: number,
-  roundInput: ReadonlyMap<string, readonly BackwardLabel[]>,
-  tracker: FrontierTracker,
-  ctx: PlannerContext,
-): void => {
-  const candidates = collectTripAlightings(trip, roundInput, ctx.dayStartMs)
-  for (const cand of candidates) {
-    for (let i = cand.index - 1; i >= 0; i -= 1) {
-      const boarding = trip.stops[i]
-      if (!boarding?.pickupAllowed) {
-        continue
-      }
-      const depAbsMs = ctx.dayStartMs + boarding.departureMs
-      const rideMs = cand.arrivalAbsMs - depAbsMs
-      if (
-        getSingaporeDateFromInstant(depAbsMs) !== ctx.searchDate ||
-        rideMs < 0 ||
-        cand.minRideMs + rideMs > ctx.rideCapMs
-      ) {
-        continue
-      }
-      recordUpdatedLabel(
-        {
-          stopId: boarding.stopId,
-          minRideMs: cand.minRideMs + rideMs,
-          estRideMs: cand.estRideMs + rideMs,
-          earliestClockMs: depAbsMs,
-          latestClockMs: depAbsMs,
-          estClockMs: depAbsMs,
-          transfers: round,
-          isScheduled: true,
-          hasBoardedTransit: true,
-        },
-        tracker,
-      )
-    }
-  }
-}
-
-const isTripActiveOnDate = (
-  trip: ScheduledTrip,
-  searchDate: string,
-  dayType: DayType,
-): boolean => {
-  const yyyymmdd = searchDate.replaceAll('-', '')
-  if (trip.removedDates?.includes(yyyymmdd)) {
-    return false
-  }
-  if (trip.addedDates?.includes(yyyymmdd)) {
-    return true
-  }
-  if (trip.startDate && yyyymmdd < trip.startDate) {
-    return false
-  }
-  if (trip.endDate && yyyymmdd > trip.endDate) {
-    return false
-  }
-  return trip.dayTypes.includes(dayType)
-}
-
-const relaxScheduledPattern = (
-  pattern: TransitPattern,
-  round: number,
-  roundInput: ReadonlyMap<string, readonly BackwardLabel[]>,
-  tracker: FrontierTracker,
-  ctx: PlannerContext,
-): void => {
-  for (const trip of pattern.scheduledTrips ?? []) {
-    if (!isTripActiveOnDate(trip, ctx.searchDate, ctx.dayType)) {
-      continue
-    }
-    if (trip.stops.some((s) => s.dropOffAllowed && roundInput.has(s.stopId))) {
-      relaxScheduledTrip(trip, round, roundInput, tracker, ctx)
-    }
-  }
-}
-
 const indexIncomingTransfers = (
   transfers: readonly TransferLink[],
 ): ReadonlyMap<string, readonly TransferLink[]> => {
@@ -525,7 +392,6 @@ const shiftLabelByTransfer = (
       nextLatest,
     ),
     transfers: nextRound,
-    isScheduled: false,
     hasBoardedTransit: true,
   }
 }
@@ -629,36 +495,6 @@ const appendBracketInstants = (
   }
 }
 
-const appendParetoBranchInstants = (
-  chosenInstants: number[],
-  ordered: readonly BackwardLabel[],
-  ctx: PlannerContext,
-  maxProbesPerStop: number,
-): void => {
-  for (const label of ordered) {
-    if (chosenInstants.length >= maxProbesPerStop) {
-      return
-    }
-    const candidateMs = label.isScheduled
-      ? label.estClockMs
-      : clamp(
-          label.estClockMs - PRIMARY_FORWARD_BIAS_MS,
-          ctx.dayStartMs,
-          ctx.deadlineMs,
-        )
-    const minGap = label.isScheduled ? 60_000 : DISTINCT_BRANCH_GAP_MS
-    const nearExisting = chosenInstants.some(
-      (ms) => Math.abs(ms - candidateMs) < minGap,
-    )
-    if (
-      !nearExisting &&
-      getSingaporeDateFromInstant(candidateMs) === ctx.searchDate
-    ) {
-      chosenInstants.push(candidateMs)
-    }
-  }
-}
-
 const buildCandidateDepartures = (
   labels: readonly BackwardLabel[],
   ctx: PlannerContext,
@@ -667,10 +503,9 @@ const buildCandidateDepartures = (
   const ordered = orderLabelsForProbe(labels, ctx.rideCapMs)
   const chosenInstants: number[] = []
   const primary = ordered[0]
-  if (primary && !primary.isScheduled) {
+  if (primary) {
     appendBracketInstants(chosenInstants, primary, ctx, maxProbesPerStop)
   }
-  appendParetoBranchInstants(chosenInstants, ordered, ctx, maxProbesPerStop)
 
   const uniqueClocks: string[] = []
   for (const ms of chosenInstants) {
@@ -691,12 +526,10 @@ const summarizeLead = (
   let minRideMs = Number.POSITIVE_INFINITY
   let estRideMs = Number.POSITIVE_INFINITY
   let transfers = Number.POSITIVE_INFINITY
-  let isScheduled = false
   for (const label of labels) {
     minRideMs = Math.min(minRideMs, label.minRideMs)
     estRideMs = Math.min(estRideMs, label.estRideMs)
     transfers = Math.min(transfers, label.transfers)
-    isScheduled = isScheduled || label.isScheduled
   }
   const effectiveMaxProbes =
     estRideMs > ctx.rideCapMs ? Math.min(2, maxProbesPerStop) : maxProbesPerStop
@@ -714,7 +547,6 @@ const summarizeLead = (
     minRideMs,
     estRideMs,
     transfers,
-    isScheduled,
   }
 }
 
@@ -775,9 +607,7 @@ const relaxPatternsForRound = (
   ctx: PlannerContext,
 ): void => {
   for (const pattern of patterns) {
-    if (pattern.timingKind === 'scheduled') {
-      relaxScheduledPattern(pattern, round, roundInput, tracker, ctx)
-    } else if (pattern.segments.some((s) => roundInput.has(s.toStopId))) {
+    if (pattern.segments.some((s) => roundInput.has(s.toStopId))) {
       relaxEstimatedPattern(pattern, round, roundInput, tracker, ctx)
     }
   }
@@ -827,7 +657,6 @@ const runBackwardRounds = (
 export const planBackwardLeads = (
   options: PlanBackwardLeadsOptions,
 ): BackwardPlanResult => {
-  const startedAt = performance.now()
   const maxFinalWalkMeters =
     options.maxFinalWalkMeters ?? DEFAULT_MAX_FINAL_WALK_M
   const maxTransfers = options.maxTransfers ?? DEFAULT_MAX_TRANSFERS
@@ -896,6 +725,5 @@ export const planBackwardLeads = (
     coveredStopCount: coveredSet.size,
     uncoveredStopIds,
     prunedStopCount,
-    planElapsedMs: Math.round((performance.now() - startedAt) * 100) / 100,
   }
 }

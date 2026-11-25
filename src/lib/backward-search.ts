@@ -6,6 +6,8 @@ import {
 import type {
   QualifiedStop,
   SearchConstraints,
+  SearchProgress,
+  SearchRunResult,
   Stop,
   StopInventory,
   Workplace,
@@ -17,14 +19,42 @@ import {
   OneMapAuthError,
 } from '@lib/onemap-client.js'
 import {
-  buildDepartureSchedule,
-  type SearchProgress,
-  type SearchRunResult,
-} from '@lib/search-scheduler.js'
-import { formatSingaporeTime } from '@lib/singapore-calendar.js'
+  formatSingaporeTime,
+  parseClockMinutes,
+} from '@lib/singapore-calendar.js'
 import type { TransitNetworkIndex } from '@lib/transit-network.js'
 
 const DEFAULT_MIN_INTERVAL_MS = 120
+const FALLBACK_STEP_MINUTES = 10
+
+const formatClockSeconds = (totalMinutes: number): string => {
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`
+}
+
+const buildFallbackSchedule = (
+  officeStart: string,
+  rideCapMinutes: number,
+): readonly string[] => {
+  const deadlineMin = parseClockMinutes(officeStart)
+  const earliestMin =
+    deadlineMin < 7 * 60 ? Math.max(0, deadlineMin - 120) : 6 * 60
+  const anchorMin = deadlineMin - (rideCapMinutes + 15)
+  const candidates: number[] = []
+  for (
+    let current = earliestMin;
+    current <= deadlineMin;
+    current += FALLBACK_STEP_MINUTES
+  ) {
+    candidates.push(current)
+  }
+  candidates.sort((a, b) => {
+    const distDiff = Math.abs(a - anchorMin) - Math.abs(b - anchorMin)
+    return distDiff !== 0 ? distDiff : a - b
+  })
+  return candidates.map(formatClockSeconds)
+}
 
 type RouteStopFn = (
   stop: Stop,
@@ -32,7 +62,7 @@ type RouteStopFn = (
   signal: AbortSignal,
 ) => Promise<readonly unknown[]>
 
-export interface RunBackwardSearchOptions {
+interface RunBackwardSearchOptions {
   readonly inventory: StopInventory
   readonly networkIndex: TransitNetworkIndex
   readonly workplace: Workplace
@@ -48,28 +78,16 @@ export interface RunBackwardSearchOptions {
   readonly probeUncoveredStops?: boolean
 }
 
-export interface BackwardSearchRunResult extends SearchRunResult {
-  readonly requestCount: number
-  readonly wastedRequestCount: number
-  readonly candidateStopCount: number
-  readonly prunedStopCount: number
-  readonly uncoveredStopCount: number
-  readonly planElapsedMs: number
-  readonly verifyElapsedMs: number
-}
-
 interface VerificationTracker {
   readonly triedStopIds: Set<string>
   readonly qualifiedByStopId: Map<string, QualifiedStop>
   readonly inventoryById: ReadonlyMap<string, Stop>
   readonly queriedKeys: Set<string>
-  readonly requestCounts: Map<string, number>
   readonly queuedHints: Map<string, string>
   readonly hintedStopIds: Set<string>
   readonly totalStops: number
   readonly totalPasses: number
   readonly notify: (progress: SearchProgress) => void
-  requestsSent: number
   errorsCount: number
   nextAllowedAtMs: number
   sessionExpired: boolean
@@ -192,11 +210,6 @@ const verifyStopDeparture = async (
       return 'stop'
     }
     tracker.queriedKeys.add(queryKey)
-    tracker.requestsSent += 1
-    tracker.requestCounts.set(
-      stop.id,
-      (tracker.requestCounts.get(stop.id) ?? 0) + 1,
-    )
     const itineraries = await options.routeStop(
       stop,
       departureTime,
@@ -253,13 +266,7 @@ const flushQueuedHints = async (
 
 const buildAllLeads = (
   options: RunBackwardSearchOptions,
-): {
-  readonly leads: readonly BackwardLead[]
-  readonly candidateStopCount: number
-  readonly prunedStopCount: number
-  readonly uncoveredStopCount: number
-  readonly planElapsedMs: number
-} => {
+): readonly BackwardLead[] => {
   const plan = planBackwardLeads({
     inventory: options.inventory,
     networkIndex: options.networkIndex,
@@ -277,17 +284,11 @@ const buildAllLeads = (
   })
 
   if (!options.probeUncoveredStops || plan.uncoveredStopIds.length === 0) {
-    return {
-      leads: plan.leads,
-      candidateStopCount: plan.leads.length,
-      prunedStopCount: plan.prunedStopCount,
-      uncoveredStopCount: plan.uncoveredStopIds.length,
-      planElapsedMs: plan.planElapsedMs,
-    }
+    return plan.leads
   }
 
   const stopsById = new Map(options.inventory.stops.map((s) => [s.id, s]))
-  const fallbackSchedule = buildDepartureSchedule(
+  const fallbackSchedule = buildFallbackSchedule(
     options.constraints.officeStart,
     options.constraints.rideCapMinutes,
   )
@@ -301,17 +302,10 @@ const buildAllLeads = (
         minRideMs: 0,
         estRideMs: 0,
         transfers: 0,
-        isScheduled: false,
       })
     }
   }
-  return {
-    leads: [...plan.leads, ...fallbackLeads],
-    candidateStopCount: plan.leads.length,
-    prunedStopCount: plan.prunedStopCount,
-    uncoveredStopCount: plan.uncoveredStopIds.length,
-    planElapsedMs: plan.planElapsedMs,
-  }
+  return [...plan.leads, ...fallbackLeads]
 }
 
 const runVerificationPass = async (
@@ -345,22 +339,12 @@ const runVerificationPass = async (
   return flushQueuedHints(passNumber, options, tracker)
 }
 
-const computeWastedRequests = (tracker: VerificationTracker): number => {
-  let wasted = 0
-  for (const [stopId, count] of tracker.requestCounts.entries()) {
-    if (!tracker.qualifiedByStopId.has(stopId)) {
-      wasted += count
-    }
-  }
-  return wasted
-}
-
 /** Run backward commute planning followed by targeted OneMap verification at the whole-search seam. */
 export const runBackwardCommuteSearch = async (
   options: RunBackwardSearchOptions,
-): Promise<BackwardSearchRunResult> => {
-  const planSummary = buildAllLeads(options)
-  const maxPasses = planSummary.leads.reduce(
+): Promise<SearchRunResult> => {
+  const leads = buildAllLeads(options)
+  const maxPasses = leads.reduce(
     (max, lead) => Math.max(max, lead.candidateDepartures.length),
     0,
   )
@@ -369,13 +353,11 @@ export const runBackwardCommuteSearch = async (
     qualifiedByStopId: new Map<string, QualifiedStop>(),
     inventoryById: new Map(options.inventory.stops.map((s) => [s.id, s])),
     queriedKeys: new Set<string>(),
-    requestCounts: new Map<string, number>(),
     queuedHints: new Map<string, string>(),
     hintedStopIds: new Set<string>(),
     totalStops: options.inventory.stops.length,
     totalPasses: Math.max(1, maxPasses),
     notify: options.onProgress,
-    requestsSent: 0,
     errorsCount: 0,
     nextAllowedAtMs: 0,
     sessionExpired: false,
@@ -389,15 +371,9 @@ export const runBackwardCommuteSearch = async (
   )
   publishSnapshot(tracker, 1)
 
-  const verifyStartedAt = performance.now()
   let status: 'completed' | 'partial' = 'completed'
   for (let passIdx = 0; passIdx < maxPasses; passIdx += 1) {
-    const outcome = await runVerificationPass(
-      passIdx,
-      planSummary.leads,
-      options,
-      tracker,
-    )
+    const outcome = await runVerificationPass(passIdx, leads, options, tracker)
     if (outcome === 'stop') {
       status = 'partial'
       break
@@ -411,13 +387,5 @@ export const runBackwardCommuteSearch = async (
     totalCount: tracker.totalStops,
     failedQueries: tracker.errorsCount,
     matches: [...tracker.qualifiedByStopId.values()],
-    requestCount: tracker.requestsSent,
-    wastedRequestCount: computeWastedRequests(tracker),
-    candidateStopCount: planSummary.candidateStopCount,
-    prunedStopCount: planSummary.prunedStopCount,
-    uncoveredStopCount: planSummary.uncoveredStopCount,
-    planElapsedMs: planSummary.planElapsedMs,
-    verifyElapsedMs:
-      Math.round((performance.now() - verifyStartedAt) * 100) / 100,
   }
 }

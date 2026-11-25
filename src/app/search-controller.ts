@@ -4,6 +4,8 @@ import type {
   OneMapAccount,
   QualifiedStop,
   SearchConstraints,
+  SearchProgress,
+  SearchRunResult,
   StopInventory,
   Workplace,
 } from '@lib/commute-types.js'
@@ -16,7 +18,6 @@ import {
   signInToOneMap,
 } from '@lib/onemap-client.js'
 import { saveCompletedResult } from '@lib/saved-result-store.js'
-import type { SearchProgress, SearchRunResult } from '@lib/search-scheduler.js'
 import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
 import type { TransitNetworkIndex } from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'

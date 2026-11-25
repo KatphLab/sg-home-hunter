@@ -15,7 +15,6 @@
     "start": "bun dist/index.js",
     "test:e2e": "bun run build && bunx --no-install playwright test",
     "inventory:refresh": "bun scripts/refresh-inventory.ts",
-    "benchmark:backward": "bun scripts/benchmark-backward.ts",
     "lint": "biome check --error-on-warnings .",
     "fix": "biome check --write --error-on-warnings . && bun run knip:fix",
     "typecheck": "tsc --noEmit",
