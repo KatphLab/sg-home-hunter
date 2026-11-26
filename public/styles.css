@@ -1044,3 +1044,12 @@ html [hidden] {
   width: 100%;
   min-height: 7rem;
 }
+
+.pick-another,
+#section-preview:has(#preview-summary[hidden]) .pick-first {
+  display: none;
+}
+
+#section-preview:has(#preview-summary[hidden]) .pick-another {
+  display: inline;
+}

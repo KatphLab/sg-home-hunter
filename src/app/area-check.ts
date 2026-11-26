@@ -28,8 +28,12 @@ import {
 const proofWithinArea = (
   ctx: AppContext,
   centre: Coordinates,
+  firstIndex = 0,
 ): QualifiedStop | undefined =>
-  ctx.state.matches.find((entry) => isWithinArea(entry.stop.point, centre))
+  ctx.state.matches.find(
+    (entry, index) =>
+      index >= firstIndex && isWithinArea(entry.stop.point, centre),
+  )
 
 const planAreaBatch = (
   leads: readonly BackwardLead[],
@@ -81,6 +85,26 @@ const retainBoardings = (
   refreshStopList(ctx)
 }
 
+const unconfirmedLeads = (ctx: AppContext, leads: readonly BackwardLead[]) => {
+  const confirmed = new Set(ctx.state.matches.map(({ stop }) => stop.id))
+  return leads.filter(({ stop }) => !confirmed.has(stop.id))
+}
+
+const confirmArea = (
+  ctx: AppContext,
+  proof: QualifiedStop,
+  leads: readonly BackwardLead[],
+  areaCheck: AreaCheckState,
+): void => {
+  areaCheck.hasMore = unconfirmedLeads(ctx, leads).some((lead) =>
+    lead.candidateDepartures.some(
+      (departure) =>
+        !areaCheck.checkedDepartures.has(`${lead.stop.id}@${departure}`),
+    ),
+  )
+  showProof(ctx, proof)
+}
+
 const runAreaBatch = async (
   ctx: AppContext,
   preview: NeighbourhoodPreview,
@@ -94,7 +118,11 @@ const runAreaBatch = async (
     ctx.state.inventory?.stops.map((stop) => [stop.id, stop]),
   )
   const candidateIds = new Set(preview.leads.map((lead) => lead.stop.id))
-  const { probes, incompleteCount } = planAreaBatch(leads, areaCheck)
+  const { probes, incompleteCount } = planAreaBatch(
+    unconfirmedLeads(ctx, leads),
+    areaCheck,
+  )
+  const initialMatchCount = ctx.state.matches.length
   areaCheck.hasMore = probes.length > 0
   for (const [index, { stop, departure, key }] of probes.entries()) {
     areaCheck.checkedDepartures.add(key)
@@ -118,23 +146,27 @@ const runAreaBatch = async (
       preview.leads.length,
       ctx.state.matches.length,
     )
-    const proof = proofWithinArea(ctx, centre)
+    const proof = proofWithinArea(ctx, centre, initialMatchCount)
     if (proof) {
-      areaCheck.hasMore = false
-      showProof(ctx, proof)
+      confirmArea(ctx, proof, leads, areaCheck)
       return
     }
     if (areaCheck.checksPerformed === 3) break
   }
+  const outcome = proofWithinArea(ctx, centre)
+    ? 'No additional stop confirmed.'
+    : 'No commute confirmed.'
   const exhaustion =
     incompleteCount > 0
       ? `No untried planned departures remain. ${String(incompleteCount)} attempted checks failed or were interrupted; these are not negative journey evidence.`
-      : 'All planned departures for this area have been checked.'
+      : proofWithinArea(ctx, centre)
+        ? 'No more planned departures to check for another stop.'
+        : 'All planned departures for this area have been checked.'
   showOutcome(
     ctx,
     areaCheck.hasMore
-      ? 'No commute confirmed. Other qualifying journeys may exist.'
-      : `No commute confirmed. ${exhaustion} Other qualifying journeys may exist.`,
+      ? `${outcome} Other qualifying journeys may exist.`
+      : `${outcome} ${exhaustion} Other qualifying journeys may exist.`,
   )
 }
 
@@ -177,6 +209,7 @@ export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
     return
   const controller = new AbortController()
   state.abortController = controller
+  const firstCheck = !areaCheck.hasRun
   areaCheck.checksPerformed = 0
   areaCheck.hasRun = true
   els.checkAreaButton.disabled = true
@@ -185,14 +218,14 @@ export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
   els.stopAreaButton.focus({ preventScroll: true })
   syncConnectivity(ctx)
   try {
-    const existing = proofWithinArea(ctx, selectedArea)
-    if (existing) {
-      showProof(ctx, existing)
-      return
-    }
     const leads = candidatesWithinArea(preview, selectedArea).sort(
       (a, b) => a.estRideMs - b.estRideMs || a.stop.id.localeCompare(b.stop.id),
     )
+    const existing = firstCheck && proofWithinArea(ctx, selectedArea)
+    if (existing) {
+      confirmArea(ctx, existing, leads, areaCheck)
+      return
+    }
     if (leads.length === 0) {
       showOutcome(
         ctx,

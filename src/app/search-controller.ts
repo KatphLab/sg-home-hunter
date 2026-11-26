@@ -188,7 +188,7 @@ const stopAreaCheck = (ctx: AppContext): void => {
   ctx.state.abortController.abort()
   ctx.state.abortController = null
   ctx.els.stopAreaButton.hidden = true
-  showOutcome(ctx, 'Stopped. This area is not confirmed by these checks.')
+  showOutcome(ctx, 'Stopped. No further departures will be checked.')
   syncConnectivity(ctx)
 }
 
@@ -243,6 +243,8 @@ export const selectArea = (
   }
   state.selectedArea = centre
   const count = candidatesWithinArea(state.preview, centre).length
+  els.previewHeading.textContent = 'Check this area'
+  els.checkMoreButton.textContent = 'Check more departures'
   mapView.setAreaSelection(centre, focus)
   els.previewSummary.hidden = true
   els.areaSummary.textContent = `${label}: ${String(count)} estimated candidates within 500 m. Straight-line distance, not a walking route.`
@@ -325,6 +327,7 @@ const displayPreview = (
     hasTenMinuteMargin(lead.estRideMs, preview.constraints.rideCapMinutes),
   ).length
   els.previewSummary.hidden = false
+  els.previewHeading.textContent = 'Choose an area'
   const empty = preview.leads.length === 0
   els.editCommuteButton.hidden = !empty
   els.previewSummary.textContent = empty
@@ -332,7 +335,7 @@ const displayPreview = (
     : `${String(preview.leads.length)} estimated stops: ${String(marginCount)} at least 10 min below cap; ${String(preview.leads.length - marginCount)} less than 10 min below. Time bands are not confidence scores. No routing requests made.`
   els.liveStatusRegion.textContent = els.previewSummary.textContent
   els.areaSummary.textContent =
-    'Tap the map or find a stop by name to choose a 500 m area.'
+    'Tap the map or choose a stop below to place a 500 m circle. This selects the area without checking any journeys.'
   els.areaStopFilter.value = ''
   els.areaPicker.open = false
   refreshAreaStopPicker(ctx)

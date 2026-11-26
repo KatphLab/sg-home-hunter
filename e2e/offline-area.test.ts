@@ -131,7 +131,7 @@ test('reopens a saved mobile check before offering a new search', async ({
   await page.setViewportSize({ width: 390, height: 844 })
   await preview(page)
   await selectArea(page, '11111')
-  await page.getByRole('button', { name: 'Check within 500 m' }).click()
+  await page.getByRole('button', { name: 'Check this area' }).click()
   await expect(
     page.getByRole('heading', { name: 'Board at River Homes' }),
   ).toBeVisible()

@@ -27,7 +27,15 @@ export const checkedStopCount = (
   ).size
 
 export const showProof = (ctx: AppContext, proof: QualifiedStop): void => {
-  showOutcome(ctx, 'Confirmed a qualifying boarding within 500 m.')
+  const hasMore = ctx.state.areaCheck?.hasMore
+  ctx.els.previewHeading.textContent = 'Explore this area'
+  ctx.els.checkMoreButton.textContent = 'Look for another stop here'
+  showOutcome(
+    ctx,
+    hasMore
+      ? 'Confirmed a boarding here. Select a numbered stop to see its journey.'
+      : 'Confirmed a boarding here. No more planned departures to check for another stop.',
+  )
   renderStatusBadge(ctx.els.resultStatusTag, 'confirmed')
   selectStop(ctx, proof.stop.id)
   ctx.els.selectedStopCard.scrollIntoView({ block: 'nearest' })

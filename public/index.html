@@ -205,13 +205,20 @@
           </section>
 
           <section class="panel-section stack-sm" id="section-preview" aria-labelledby="heading-preview" hidden>
-            <h2 id="heading-preview" tabindex="-1">Estimated stops</h2>
+            <h2 id="heading-preview" tabindex="-1">Choose an area</h2>
             <p id="preview-summary" class="field-hint"></p>
             <button id="edit-commute-btn" class="btn btn--secondary" type="button" hidden>Edit commute</button>
             <p id="area-summary" role="status" aria-live="polite"></p>
+            <div class="action-row">
+              <button id="check-area-btn" type="button" class="btn btn--primary" disabled>Check this area</button>
+              <button id="check-more-btn" type="button" class="btn btn--primary" hidden>Check more departures</button>
+              <button id="stop-area-btn" type="button" class="btn btn--danger" hidden>Stop</button>
+            </div>
+            <p id="area-result" role="status" aria-live="polite" tabindex="-1" hidden></p>
             <details id="area-picker" class="area-picker">
-              <summary>Find a stop by name or ID</summary>
+              <summary><span class="pick-first">Choose by stop name or ID</span><span class="pick-another">Choose another area</span></summary>
               <div class="stack-xs">
+                <p class="field-hint">Tap a new point on the map or pick a stop below to move the circle.</p>
                 <label class="field">
                   <span class="sr-only">Filter stops by name or ID</span>
                   <input id="area-stop-filter" type="search" placeholder="Stop name or ID" />
@@ -222,12 +229,6 @@
                 </label>
               </div>
             </details>
-            <div class="action-row">
-              <button id="check-area-btn" type="button" class="btn btn--primary" disabled>Check within 500 m</button>
-              <button id="check-more-btn" type="button" class="btn btn--primary" hidden>Check more departures</button>
-              <button id="stop-area-btn" type="button" class="btn btn--danger" hidden>Stop</button>
-            </div>
-            <p id="area-result" role="status" aria-live="polite" tabindex="-1" hidden></p>
           </section>
 
           <section class="panel-section" id="section-progress" aria-labelledby="heading-progress">

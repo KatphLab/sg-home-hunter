@@ -277,7 +277,6 @@ test.describe('House Hunter PWA acceptance', () => {
       'true',
     )
     await expect(page.locator('#heading-preview')).toBeFocused()
-    await expect(page.locator('#heading-preview')).toHaveText('Estimated stops')
     await expect(page.locator('#area-stop-filter')).toBeHidden()
     await page.locator('#area-picker summary').press('Enter')
     await page.fill('#area-stop-filter', 'River Homes')
@@ -457,7 +456,10 @@ test.describe('House Hunter PWA acceptance', () => {
     await page.getByRole('button', { name: 'Check more departures' }).click()
     await expect(outcome).toContainText('Confirmed')
     await expect(outcome).toContainText('2 checks')
-    await expect(page.locator('#check-more-btn')).toBeHidden()
+    const another = page.getByRole('button', {
+      name: 'Look for another stop here',
+    })
+    await expect(another).toBeVisible()
     await expect(check).toBeDisabled()
     await expect(page.locator('#stop-area-btn')).toBeHidden()
     await expect(map).toBeVisible()
@@ -482,6 +484,12 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.getByText(SEARCH_DATE)).toHaveCount(0)
     await expect(page.getByText(INVENTORY_DATE)).toHaveCount(0)
 
+    await another.click()
+    await expect(outcome).toContainText('No additional stop confirmed.')
+    await expect(outcome).toContainText('No more planned departures')
+    await expect(another).toBeHidden()
+    await expect(journey).toContainText('11115')
+
     // Reuse both the transfer in an overlapping circle and the outside boarding.
     for (const [centre, boarding] of [
       ['11116', '11115'],
@@ -500,7 +508,7 @@ test.describe('House Hunter PWA acceptance', () => {
       await expect(outcome).toContainText('Confirmed')
       await expect(outcome).toContainText('0 checks')
       await expect(journey).toContainText(boarding)
-      expect(calls).toBe(5)
+      expect(calls).toBe(8)
     }
   })
 

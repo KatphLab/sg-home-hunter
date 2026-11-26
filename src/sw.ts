@@ -1,4 +1,4 @@
-const CACHE_NAME = 'house-hunter-shell-v13'
+const CACHE_NAME = 'house-hunter-shell-v14'
 const PRECACHE_PATHS = [
   './',
   './index.html',
