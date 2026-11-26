@@ -20,7 +20,7 @@ Help a Singapore house hunter identify neighbourhoods within 500 m straight-line
 
 ## Positioning
 
-A zero-backend, client-only PWA that signs directly into the house hunter's own OneMap account from the browser (no proxy or shared API key), scans a bundled dated island-wide stop inventory breadth-first so distant stops receive a first departure check before nearby stops receive another, enforces an in-vehicle-only ride cap separate from walking and waiting, and stays strictly honest about straight-line proximity, single-date evidence, and non-exhaustiveness.
+A zero-backend, client-only PWA that signs directly into the house hunter's own OneMap account from the browser (no proxy or shared API key). It plans with the island-wide network but limits boarding-stop requests to an approximate radius based on the ride cap. Walking and waiting do not count against the ride cap.
 
 ## Operating Context
 
@@ -55,7 +55,7 @@ A zero-backend, client-only PWA that signs directly into the house hunter's own 
 ## Product Principles
 
 1. **Honesty over false precision:** Label 500 m zones as straight-line proximity, frame each journey as one match for one displayed date, distinguish tried from matched stops, and never imply unshaded areas are unreachable.
-2. **Progressive island-wide discovery:** Check distant stops on a first pass before revisiting nearby stops so early leads span the island and appear live while the search runs.
+2. **Progressive discovery:** Show verified matches as they arrive. Limit direct requests by distance without discarding a boarding outside the radius that a returned journey already proves.
 3. **Offline resilience for the last completed map:** Never overwrite a completed search when starting, stopping, or abandoning a new one; keep the saved map, constraints, and evidence usable without tiles or sign-in.
 4. **Strict client-only account boundary:** Keep credentials and tokens strictly in the user's browser session, never behind a proxy, never logged, and never blame the password when a sign-in response cannot be read.
 5. **Equal access beyond the map:** Provide a full accessible stop and journey list synced with the map so every recommendation can be evaluated without using the map.

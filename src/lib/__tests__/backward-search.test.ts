@@ -60,6 +60,64 @@ const bus = (stop: Stop, board: string, alight: string) => ({
 })
 
 describe('backward-search verification', () => {
+  it('limits direct requests by ride cap but keeps proven stops beyond the radius', async () => {
+    const far = (id: string) => ({
+      ...stop(id),
+      point: { ...point, latitude: 1.529 },
+    })
+    // 13.9 km from work: outside the 30-minute radius, inside the 31-minute radius.
+    const planned = far('planned')
+    const fallback = far('fallback')
+    const hinted = far('hinted')
+    const proven = far('proven')
+    for (const rideCapMinutes of [30, 31]) {
+      const calls = new Set<string>()
+      const result = await verify({
+        constraints: { searchDate, officeStart: '09:00', rideCapMinutes },
+        inventory: {
+          ...inventory,
+          stops: [origin, planned, fallback, hinted, proven],
+        },
+        plan: {
+          leads: [lead(origin), lead(planned)],
+          uncoveredStopIds: [fallback.id],
+        },
+        routeStop: (from) => {
+          calls.add(from.id)
+          if (from !== origin) return Promise.resolve([])
+          const leg = bus(origin, '08:30', '08:52')
+          return Promise.resolve([
+            {
+              startTime: leg.startTime,
+              endTime: leg.endTime,
+              legs: [
+                {
+                  ...leg,
+                  intermediateStops: [
+                    { stopCode: hinted.id, departure: time('08:35') },
+                    {
+                      stopCode: proven.id,
+                      departure: time('08:40'),
+                      pickupType: 0,
+                    },
+                  ],
+                },
+              ],
+            },
+          ])
+        },
+      })
+      expect(calls).toEqual(
+        new Set(
+          rideCapMinutes === 30
+            ? [origin.id]
+            : [origin.id, planned.id, fallback.id, hinted.id],
+        ),
+      )
+      expect(result.matches.map(({ stop }) => stop.id)).toContain(proven.id)
+    }
+  })
+
   it('verifies a one-minute LRT ride even when the travel estimate exceeds the cap', async () => {
     const rumbia = {
       ...stop('SE2', 'rail'),

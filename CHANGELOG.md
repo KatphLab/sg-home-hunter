@@ -2,6 +2,7 @@
 
 ## 2026-11-26
 
+- Limit direct OneMap requests to a straight-line radius based on the ride cap (13.7 km for 30 minutes). Keep qualifying stops outside the radius when an itinerary already proves them.
 - Skip redundant OneMap requests when an itinerary confirms pickup at an intermediate stop and the remaining journey meets the ride cap and arrival window.
 - Save a completed search offline when every stop with a failed routing request later has a confirmed journey. Unresolved failures still leave the previous offline result intact.
 - Keep late bus departures and after-midnight trains eligible for verification. Bind first/last bus times to each visit in route order instead of guessing from nearby stops' clocks.

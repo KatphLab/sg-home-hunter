@@ -22,9 +22,12 @@ import {
   formatSingaporeTime,
   parseClockMinutes,
 } from '@lib/singapore-calendar.js'
+import { haversineDistanceMeters } from '@lib/transit-network.js'
 
 const DEFAULT_MIN_INTERVAL_MS = 120
 const FALLBACK_STEP_MINUTES = 10
+const ESTIMATED_TRANSIT_KMH = 25
+const FINAL_WALK_ALLOWANCE_M = 1200
 
 const formatClockSeconds = (totalMinutes: number): string => {
   const hours = Math.floor(totalMinutes / 60)
@@ -78,6 +81,7 @@ interface VerificationTracker {
   readonly failedStopIds: Set<string>
   readonly qualifiedByStopId: Map<string, QualifiedStop>
   readonly inventoryById: ReadonlyMap<string, Stop>
+  readonly probeStopIds: ReadonlySet<string>
   readonly queriedKeys: Set<string>
   readonly queuedHints: Map<string, string>
   readonly hintedStopIds: Set<string>
@@ -160,7 +164,7 @@ const recordSingleItinerary = (
   }
   for (const hint of evaluated.hints) {
     if (
-      !tracker.inventoryById.has(hint.stopId) ||
+      !tracker.probeStopIds.has(hint.stopId) ||
       tracker.qualifiedByStopId.has(hint.stopId) ||
       tracker.hintedStopIds.has(hint.stopId)
     ) {
@@ -319,7 +323,20 @@ export const runBackwardCommuteSearch = async (
   options: RunBackwardSearchOptions,
 ): Promise<SearchRunResult> => {
   const inventoryById = new Map(options.inventory.stops.map((s) => [s.id, s]))
-  const leads = buildAllLeads(options, inventoryById)
+  const radiusM =
+    FINAL_WALK_ALLOWANCE_M +
+    (ESTIMATED_TRANSIT_KMH * 1000 * options.constraints.rideCapMinutes) / 60
+  const probeStopIds = new Set<string>()
+  for (const stop of options.inventory.stops) {
+    if (
+      haversineDistanceMeters(stop.point, options.workplace.point) <= radiusM
+    ) {
+      probeStopIds.add(stop.id)
+    }
+  }
+  const leads = buildAllLeads(options, inventoryById).filter(({ stop }) =>
+    probeStopIds.has(stop.id),
+  )
   const maxPasses = leads.reduce(
     (max, lead) => Math.max(max, lead.candidateDepartures.length),
     0,
@@ -329,6 +346,7 @@ export const runBackwardCommuteSearch = async (
     failedStopIds: new Set<string>(),
     qualifiedByStopId: new Map<string, QualifiedStop>(),
     inventoryById,
+    probeStopIds,
     queriedKeys: new Set<string>(),
     queuedHints: new Map<string, string>(),
     hintedStopIds: new Set<string>(),

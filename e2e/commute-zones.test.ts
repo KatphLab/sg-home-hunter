@@ -312,7 +312,7 @@ test.describe('House Hunter PWA acceptance', () => {
     await signInViaUi(page)
     await page.fill('#postal-input', '018989')
     await page.fill('#office-start-input', '09:00')
-    await page.fill('#ride-cap-input', '30')
+    await page.fill('#ride-cap-input', '40')
     await page.click('#start-search-btn')
 
     // Mid-search assertions: pass 1 finished (3 reachable candidate stops tried, 88888 pruned),
@@ -481,11 +481,11 @@ test.describe('House Hunter PWA acceptance', () => {
     })
     await page.reload()
 
-    // Search A: complete search for 018989 / 09:00 / 30 min.
+    // The 40-minute search radius includes the Punggol boarding in this saved result.
     await signInViaUi(page)
     await page.fill('#postal-input', '018989')
     await page.fill('#office-start-input', '09:00')
-    await page.fill('#ride-cap-input', '30')
+    await page.fill('#ride-cap-input', '40')
     await page.click('#start-search-btn')
     await expect(page.locator('#result-status-tag')).toHaveText('Completed', {
       timeout: 25_000,
@@ -531,7 +531,7 @@ test.describe('House Hunter PWA acceptance', () => {
       'Start 09:00',
     )
     await expect(page.locator('#active-constraints-summary')).toContainText(
-      'Ride cap 30 min',
+      'Ride cap 40 min',
     )
 
     // Verify map stop and accessible list both work offline without tiles or sign-in.
