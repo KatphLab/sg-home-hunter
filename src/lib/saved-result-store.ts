@@ -184,6 +184,21 @@ const parseSnapshot = (raw: unknown): CompletedSearchSnapshot | null => {
     }
     matches.push(parsed)
   }
+  const area = raw['checkedArea']
+  let checkedArea: CompletedSearchSnapshot['checkedArea']
+  if (area !== undefined) {
+    if (!isRecord(area)) return null
+    const centre = parseCoordinates(area['centre'])
+    const proofStopId = area['proofStopId']
+    if (
+      centre === null ||
+      !isNonEmptyString(proofStopId) ||
+      !matches.some((entry) => entry.stop.id === proofStopId)
+    ) {
+      return null
+    }
+    checkedArea = { centre, proofStopId }
+  }
   return {
     version: 1,
     completedAtIso,
@@ -193,6 +208,7 @@ const parseSnapshot = (raw: unknown): CompletedSearchSnapshot | null => {
     triedCount,
     totalCount,
     matches,
+    ...(checkedArea ? { checkedArea } : {}),
   }
 }
 

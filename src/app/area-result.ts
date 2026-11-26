@@ -7,6 +7,7 @@ import {
   formatRideMinutes,
   formatServiceChain,
 } from '@lib/journey-format.js'
+import { saveCompletedResult } from '@lib/saved-result-store.js'
 import {
   renderConstraintsSummary,
   renderCounters,
@@ -27,6 +28,25 @@ export const showProof = (ctx: AppContext, proof: QualifiedStop): void => {
   showOutcome(ctx, 'Confirmed a qualifying boarding within 500 m.')
   ctx.els.resultStatusTag.textContent = 'Area confirmed'
   selectStop(ctx, proof.stop.id)
+  const { preview, selectedArea, inventory, areaCheck, matches } = ctx.state
+  if (!preview || !selectedArea || !inventory) return
+  try {
+    saveCompletedResult(window.localStorage, {
+      version: 1,
+      completedAtIso: new Date().toISOString(),
+      inventoryDate: inventory.inventoryDate,
+      workplace: preview.workplace,
+      constraints: preview.constraints,
+      triedCount: areaCheck?.checkedDepartures.size ?? 0,
+      totalCount: areaCheck?.checkedDepartures.size ?? 0,
+      matches,
+      checkedArea: { centre: selectedArea, proofStopId: proof.stop.id },
+    })
+  } catch {
+    ctx.els.areaResult.textContent +=
+      ' Could not save this area for offline viewing. Your previous saved result is unchanged.'
+    ctx.els.liveStatusRegion.textContent = ctx.els.areaResult.textContent
+  }
 }
 
 export const applySnapshot = (
@@ -54,5 +74,15 @@ export const applySnapshot = (
     snapshot.constraints.officeStart,
     snapshot.constraints.rideCapMinutes,
   )
-  selectStop(ctx, null)
+  if (snapshot.checkedArea) {
+    const { centre, proofStopId } = snapshot.checkedArea
+    mapView.setAreaSelection(centre, false)
+    els.resultStatusTag.textContent = 'Saved offline area check'
+    const scope = `Checked area: within 500 m of ${centre.latitude.toFixed(5)}, ${centre.longitude.toFixed(5)} (straight-line distance, not a walking route). Only verified boardings are shown; this is not an island-wide scan.`
+    els.activeConstraintsSummary.textContent += ` ${scope}`
+    els.liveStatusRegion.textContent = `Saved offline area check. ${scope}`
+    selectStop(ctx, proofStopId)
+  } else {
+    selectStop(ctx, null)
+  }
 }

@@ -73,6 +73,10 @@ export interface CompletedSearchSnapshot {
   readonly triedCount: number
   readonly totalCount: number
   readonly matches: readonly QualifiedStop[]
+  readonly checkedArea?: {
+    readonly centre: Coordinates
+    readonly proofStopId: string
+  }
 }
 
 export interface OneMapAccount {
