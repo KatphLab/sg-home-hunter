@@ -47,9 +47,7 @@ export interface BackwardLead {
 
 export interface BackwardPlanResult {
   readonly leads: readonly BackwardLead[]
-  readonly coveredStopCount: number
   readonly uncoveredStopIds: readonly string[]
-  readonly prunedStopCount: number
 }
 
 export interface PlanBackwardLeadsOptions {
@@ -980,6 +978,27 @@ const runBackwardRounds = (
   return boardedFrontiers
 }
 
+const findUncoveredStops = ({
+  inventory,
+  networkIndex,
+  workplace,
+}: PlanBackwardLeadsOptions): string[] => {
+  const covered = new Set<string>()
+  for (const pattern of networkIndex.patterns) {
+    for (const segment of pattern.segments) {
+      covered.add(segment.fromStopId)
+      covered.add(segment.toStopId)
+    }
+  }
+  const uncovered: string[] = []
+  for (const stop of inventory.stops) {
+    if (!covered.has(stop.id) && !isDestinationStationMatch(stop, workplace)) {
+      uncovered.push(stop.id)
+    }
+  }
+  return uncovered
+}
+
 /** Plan prioritized boarding leads and candidate departures by searching backward from the workplace. */
 export const planBackwardLeads = (
   options: PlanBackwardLeadsOptions,
@@ -1025,14 +1044,6 @@ export const planBackwardLeads = (
     maxTransfers,
     ctx,
   )
-  const coveredSet = new Set(options.networkIndex.coveredStopIds)
-  const uncoveredStopIds = options.inventory.stops
-    .filter(
-      (s) =>
-        !coveredSet.has(s.id) &&
-        !isDestinationStationMatch(s, options.workplace),
-    )
-    .map((s) => s.id)
   const leads = buildSortedLeads(
     options.inventory,
     options.workplace,
@@ -1040,18 +1051,8 @@ export const planBackwardLeads = (
     ctx,
     maxProbesPerStop,
   )
-  const leadStopSet = new Set(leads.map((l) => l.stop.id))
-  const prunedStopCount = options.inventory.stops.filter(
-    (s) =>
-      coveredSet.has(s.id) &&
-      !leadStopSet.has(s.id) &&
-      !isDestinationStationMatch(s, options.workplace),
-  ).length
-
   return {
     leads,
-    coveredStopCount: coveredSet.size,
-    uncoveredStopIds,
-    prunedStopCount,
+    uncoveredStopIds: findUncoveredStops(options),
   }
 }

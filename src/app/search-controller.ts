@@ -374,7 +374,6 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
     plan,
     workplace,
     constraints,
-    probeUncoveredStops: true,
     signal: controller.signal,
     routeStop: async (stop, departureTimeHHMMSS, signal) => {
       const plan = await fetchTransitPlan({

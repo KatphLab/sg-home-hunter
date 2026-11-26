@@ -90,6 +90,14 @@ const wireUiEvents = (ctx: AppContext): void => {
   window.addEventListener('offline', () => syncConnectivity(ctx))
 }
 
+const fetchDataset = async (filename: string): Promise<string> => {
+  const response = await fetch(`./data/${filename}`)
+  if (!response.ok) {
+    throw new Error(`${filename} HTTP ${String(response.status)}`)
+  }
+  return response.text()
+}
+
 const bootstrap = async (): Promise<void> => {
   const els = collectAppElements()
   const state: AppState = {
@@ -127,19 +135,9 @@ const bootstrap = async (): Promise<void> => {
   }
 
   try {
-    const [stopsResponse, networkResponse] = await Promise.all([
-      fetch('./data/stops.tsv'),
-      fetch('./data/bus-network.tsv'),
-    ])
-    if (!stopsResponse.ok) {
-      throw new Error(`stops.tsv HTTP ${String(stopsResponse.status)}`)
-    }
-    if (!networkResponse.ok) {
-      throw new Error(`bus-network.tsv HTTP ${String(networkResponse.status)}`)
-    }
     const [stopsText, networkText] = await Promise.all([
-      stopsResponse.text(),
-      networkResponse.text(),
+      fetchDataset('stops.tsv'),
+      fetchDataset('bus-network.tsv'),
     ])
     const inventory = parseStopInventory(stopsText)
     state.inventory = inventory

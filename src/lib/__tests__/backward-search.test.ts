@@ -1,551 +1,212 @@
 import { describe, expect, it } from 'bun:test'
 import {
-  type PlanBackwardLeadsOptions,
-  planBackwardLeads,
-} from '@lib/backward-planner.js'
-import {
   type RunBackwardSearchOptions,
-  runBackwardCommuteSearch as verifyDepartures,
+  runBackwardCommuteSearch,
 } from '@lib/backward-search.js'
-import type {
-  SearchConstraints,
-  StopInventory,
-  Workplace,
-} from '@lib/commute-types.js'
+import type { Stop } from '@lib/commute-types.js'
 import { OneMapAuthError } from '@lib/onemap-client.js'
 import { parseSingaporeDateTimeMs } from '@lib/singapore-calendar.js'
-import { buildTransitNetworkIndex } from '@lib/transit-network.js'
 
-const runBackwardCommuteSearch = (
-  options: PlanBackwardLeadsOptions & Omit<RunBackwardSearchOptions, 'plan'>,
-) => verifyDepartures({ ...options, plan: planBackwardLeads(options) })
-
-const SEARCH_DATE = '2026-11-26'
-const CONSTRAINTS: SearchConstraints = {
-  searchDate: SEARCH_DATE,
-  officeStart: '09:00',
-  rideCapMinutes: 30,
+const searchDate = '2026-11-26'
+const point = { latitude: 1.404, longitude: 103.902 }
+const stop = (id: string, kind: Stop['kind'] = 'bus'): Stop => ({
+  id,
+  name: id,
+  kind,
+  point,
+})
+const origin = stop('origin')
+const transfer = stop('transfer')
+const last = stop('last')
+const outside = stop('outside')
+const destination = stop('NS17', 'rail')
+const interchange = stop('CC15', 'rail')
+const inventory = {
+  inventoryDate: searchDate,
+  stops: [origin, transfer, last, outside, destination, interchange],
 }
+const time = (clock: string) => parseSingaporeDateTimeMs(searchDate, clock)
+const lead = (stop: Stop) => ({
+  stop,
+  candidateDepartures: ['08:25:00'],
+  minRideMs: 0,
+  estRideMs: 0,
+  transfers: 0,
+})
 
-const sgtMs = (clock: string, offsetMs = 0): number =>
-  parseSingaporeDateTimeMs(SEARCH_DATE, clock.slice(0, 5)) +
-  Number(clock.slice(6) || 0) * 1000 +
-  offsetMs
-
-const INVENTORY: StopInventory = {
-  inventoryDate: '2026-11-24',
-  stops: [
-    {
-      id: '65009',
-      kind: 'bus',
-      name: 'Upstream Overcap',
-      point: { latitude: 1.404, longitude: 103.902 },
-    },
-    {
-      id: '65729',
-      kind: 'bus',
-      name: 'Punggol Coast Stn',
-      point: { latitude: 1.4105, longitude: 103.9085 },
-    },
-    {
-      id: '69009',
-      kind: 'bus',
-      name: 'Punggol Coast Int',
-      point: { latitude: 1.414_19, longitude: 103.9106 },
-    },
-    {
-      id: '65701',
-      kind: 'bus',
-      name: 'Mid Transfer',
-      point: { latitude: 1.408, longitude: 103.906 },
-    },
-    {
-      id: 'NS17',
-      kind: 'rail',
-      name: 'Bishan',
-      point: { latitude: 1.351_455, longitude: 103.848_263 },
-    },
-    {
-      id: 'CC15',
-      kind: 'rail',
-      name: 'Bishan',
-      point: { latitude: 1.351_455, longitude: 103.848_263 },
-    },
-    {
-      id: 'FAR01',
-      kind: 'bus',
-      name: 'Far Tuas',
-      point: { latitude: 1.26, longitude: 103.63 },
-    },
-    {
-      id: 'UNCOV',
-      kind: 'bus',
-      name: 'Uncovered Stop',
-      point: { latitude: 1.4145, longitude: 103.9105 },
-    },
-  ],
-}
-
-const POSTAL_WORKPLACE: Workplace = {
-  kind: 'postal',
-  postalCode: '828616',
-  label: 'SIT Punggol',
-  point: { latitude: 1.414_19, longitude: 103.910_623 },
-}
-
-const makeBusItinerary = (
-  stopId: string,
-  boardClock: string,
-  arriveClock: string,
-  finalWalkMs = 0,
-  boardOffsetMs = 0,
-) => {
-  const boardMs = sgtMs(boardClock, boardOffsetMs)
-  const alightMs = sgtMs(arriveClock) - finalWalkMs
-  return {
-    startTime: boardMs,
-    endTime: sgtMs(arriveClock),
-    legs: [
-      {
-        mode: 'BUS',
-        startTime: boardMs,
-        endTime: alightMs,
-        from: { stopCode: stopId },
-        routeShortName: '381',
-      },
-      ...(finalWalkMs > 0
-        ? [{ mode: 'WALK', startTime: alightMs, endTime: sgtMs(arriveClock) }]
-        : []),
-    ],
-  }
-}
-
-describe('backward-search whole-search correctness vs baseline', () => {
-  it('matches baseline on downstream-only, tight transfer, final walk boundary, and exact ride cap without probing far stops', async () => {
-    const networkIndex = buildTransitNetworkIndex({
-      inventory: INVENTORY,
-      networkDate: SEARCH_DATE,
-      busServices: {
-        '381': {
-          name: 'Local',
-          routes: [['65009', '65701', '65729', '69009']],
-        },
-        '990': {
-          name: 'Far West',
-          routes: [['FAR01', '65009']],
-        },
-      },
-      busFirstLast: {
-        '65009': ['381 0530 2330 = = = =', '990 0530 2330 = = = ='],
-        '65701': ['381 0535 2335 = = = ='],
-        '65729': ['381 0540 2340 = = = ='],
-        '69009': ['381 0542 2342 = = = ='],
-        FAR01: ['990 0500 2300 = = = ='],
-      },
-    })
-
-    const transferItinerary = {
-      startTime: sgtMs('08:05:00'),
-      endTime: sgtMs('08:59:00'),
-      legs: [
-        {
-          mode: 'BUS',
-          startTime: sgtMs('08:05:00'),
-          endTime: sgtMs('08:30:00'),
-          from: { stopCode: '65009' },
-          routeShortName: '381',
-        },
-        {
-          mode: 'WALK',
-          startTime: sgtMs('08:30:00'),
-          endTime: sgtMs('08:34:00'),
-        },
-        {
-          mode: 'BUS',
-          startTime: sgtMs('08:35:00'),
-          endTime: sgtMs('08:55:00'),
-          from: { stopCode: '65701' },
-          routeShortName: '84W',
-        },
-        {
-          mode: 'WALK',
-          startTime: sgtMs('08:55:00'),
-          endTime: sgtMs('08:59:00'),
-        },
-      ],
-    }
-
-    // 65729 has a ride of exactly 30m (08:30 -> 09:00)
-    const exactCap65729 = makeBusItinerary('65729', '08:30:00', '09:00:00')
-    // A late walk pushes arrival past 09:00 -> must NOT qualify
-    const lateWalk = makeBusItinerary('65009', '08:40:00', '09:01:00', 120_000)
-
-    const oracleCallsBackward: string[] = []
-
-    const makeOracle =
-      (log: string[]) => (stop: { id: string }, depTime: string) => {
-        log.push(`${stop.id}@${depTime}`)
-        if (stop.id === '65009') {
-          return Promise.resolve([transferItinerary, lateWalk])
-        }
-        if (stop.id === '65729') {
-          return Promise.resolve([exactCap65729])
-        }
-        if (stop.id === '65701') {
-          return Promise.resolve([
-            makeBusItinerary('65701', '08:35:00', '08:59:00', 240_000),
-          ])
-        }
-        return Promise.resolve([])
-      }
-
-    const backResult = await runBackwardCommuteSearch({
-      inventory: INVENTORY,
-      networkIndex,
-      workplace: POSTAL_WORKPLACE,
-      constraints: CONSTRAINTS,
-      minRequestIntervalMs: 0,
-      signal: new AbortController().signal,
-      routeStop: makeOracle(oracleCallsBackward),
-      onProgress: () => {},
-    })
-
-    expect(backResult.status).toBe('completed')
-
-    const backIds = backResult.matches.map((m) => m.stop.id).sort()
-    expect(backIds).toEqual(['65701', '65729'])
-    expect(oracleCallsBackward.some((c) => c.startsWith('FAR01@'))).toBe(false)
-    expect(oracleCallsBackward.length).toBeGreaterThanOrEqual(2)
+const verify = (
+  options: Pick<RunBackwardSearchOptions, 'routeStop'> &
+    Partial<RunBackwardSearchOptions>,
+) =>
+  runBackwardCommuteSearch({
+    inventory,
+    plan: { leads: [lead(origin), lead(transfer)], uncoveredStopIds: [] },
+    constraints: { searchDate, officeStart: '09:00', rideCapMinutes: 30 },
+    workplace: { kind: 'postal', postalCode: '828616', label: 'Work', point },
+    signal: new AbortController().signal,
+    minRequestIntervalMs: 0,
+    onProgress: () => {},
+    ...options,
   })
 
-  it('never qualifies a timed intermediate stop unless confirmed by routeStop response', async () => {
-    const subStops = INVENTORY.stops.slice(0, 4)
-    const networkIndex = buildTransitNetworkIndex({
-      inventory: {
-        inventoryDate: INVENTORY.inventoryDate,
-        stops: subStops,
-      },
-      networkDate: SEARCH_DATE,
-      busServices: {
-        '381': {
-          name: 'Local',
-          routes: [['65009', '65701', '65729', '69009']],
-        },
-      },
-      busFirstLast: {
-        '65009': ['381 0530 2330 = = = ='],
-        '65701': ['381 0535 2335 = = = ='],
-        '65729': ['381 0540 2340 = = = ='],
-        '69009': ['381 0542 2342 = = = ='],
-      },
-    })
+const bus = (stop: Stop, board: string, alight: string) => ({
+  mode: 'BUS',
+  startTime: time(board),
+  endTime: time(alight),
+  from: { stopCode: stop.id },
+  routeShortName: '381',
+})
 
-    const hintAtMs = sgtMs('08:35:00')
-    const unconfirmedHintPlan = {
-      startTime: sgtMs('08:05:00'),
-      endTime: sgtMs('08:50:00'),
-      legs: [
-        {
-          mode: 'BUS',
-          startTime: sgtMs('08:05:00'),
-          endTime: sgtMs('08:50:00'),
-          from: { stopCode: '65009' },
-          routeShortName: '381',
-          intermediateStops: [
-            { stopCode: '65701', arrival: hintAtMs, departure: hintAtMs },
-          ],
-        },
-      ],
-    }
-
-    const probed: string[] = []
-    const result = await runBackwardCommuteSearch({
-      inventory: {
-        inventoryDate: INVENTORY.inventoryDate,
-        stops: subStops,
-      },
-      networkIndex,
-      workplace: POSTAL_WORKPLACE,
-      constraints: CONSTRAINTS,
-      minRequestIntervalMs: 0,
-      signal: new AbortController().signal,
-      routeStop: (stop, depTime) => {
-        probed.push(`${stop.id}@${depTime}`)
-        if (stop.id === '65009') {
-          return Promise.resolve([unconfirmedHintPlan])
-        }
-        // Reject hint at 08:35:00, confirm 65729 only
-        if (stop.id === '65729' && depTime !== '08:35:00') {
-          return Promise.resolve([
-            makeBusItinerary('65729', '08:40:00', '08:50:00'),
-          ])
-        }
-        return Promise.resolve([])
-      },
-      onProgress: () => {},
-    })
-
-    expect(result.matches.map((m) => m.stop.id)).toEqual(['65729'])
-    expect(probed).toContain('65701@08:35:00')
-  })
-
-  it('qualifies exact destination station with zero routing calls while still testing same-point other-line station', async () => {
-    const stationWorkplace: Workplace = {
-      kind: 'station',
-      stationId: 'NS17',
-      label: 'NS17 Bishan',
-      point: { latitude: 1.351_455, longitude: 103.848_263 },
-    }
-    const subInventory: StopInventory = {
-      inventoryDate: INVENTORY.inventoryDate,
-      stops: INVENTORY.stops.filter((s) => s.id === 'NS17' || s.id === 'CC15'),
-    }
-    const networkIndex = buildTransitNetworkIndex({
-      inventory: subInventory,
-      networkDate: SEARCH_DATE,
-      busServices: {},
-      busFirstLast: {},
-    })
-
+describe('backward-search verification', () => {
+  it('reuses a confirmed transfer even when the whole ride exceeds the cap', async () => {
     const calls: string[] = []
-    const result = await runBackwardCommuteSearch({
-      inventory: subInventory,
-      networkIndex,
-      workplace: stationWorkplace,
-      constraints: CONSTRAINTS,
-      minRequestIntervalMs: 0,
-      signal: new AbortController().signal,
+    const result = await verify({
       routeStop: (stop) => {
         calls.push(stop.id)
-        return Promise.resolve([])
-      },
-      onProgress: () => {},
-    })
-
-    expect(calls).not.toContain('NS17')
-    expect(result.matches.map((m) => m.stop.id)).toEqual(['NS17'])
-    expect(result.matches[0]?.journey.isAtDestination).toBe(true)
-  })
-
-  it('supports uncovered stop fallback probing, transient failures, abort, and auth expiry', async () => {
-    const stop65729 = INVENTORY.stops.find((s) => s.id === '65729')
-    const stop69009 = INVENTORY.stops.find((s) => s.id === '69009')
-    const stopUncov = INVENTORY.stops.find((s) => s.id === 'UNCOV')
-    if (!stop65729 || !stop69009 || !stopUncov) {
-      throw new Error('Missing fixture stops')
-    }
-    const subInventory: StopInventory = {
-      inventoryDate: INVENTORY.inventoryDate,
-      stops: [stop65729, stop69009, stopUncov],
-    }
-    const networkIndex = buildTransitNetworkIndex({
-      inventory: {
-        inventoryDate: INVENTORY.inventoryDate,
-        stops: [stop65729, stop69009],
-      },
-      networkDate: SEARCH_DATE,
-      busServices: {
-        '381': { name: 'Local', routes: [['65729', '69009']] },
-      },
-      busFirstLast: {
-        '65729': ['381 0530 2330 = = = ='],
-        '69009': ['381 0532 2332 = = = ='],
+        return Promise.resolve([
+          {
+            startTime: time('08:05'),
+            endTime: time('08:59'),
+            legs: [
+              bus(origin, '08:05', '08:30'),
+              bus(transfer, '08:35', '08:55'),
+              {
+                mode: 'WALK',
+                startTime: time('08:55'),
+                endTime: time('08:59'),
+              },
+            ],
+          },
+        ])
       },
     })
-
-    const calls: string[] = []
-    const resAuth = await runBackwardCommuteSearch({
-      inventory: subInventory,
-      networkIndex,
-      workplace: POSTAL_WORKPLACE,
-      constraints: CONSTRAINTS,
-      probeUncoveredStops: true,
-      minRequestIntervalMs: 0,
-      signal: new AbortController().signal,
-      routeStop: (stop) => {
-        calls.push(stop.id)
-        if (stop.id === 'UNCOV') {
-          return Promise.reject(new OneMapAuthError())
-        }
-        return Promise.reject(new Error('transient'))
-      },
-      onProgress: () => {},
-    })
-
-    expect(calls).toContain('UNCOV')
-    expect(resAuth.status).toBe('partial')
-    expect(resAuth.authExpired).toBe(true)
-    expect(resAuth.failedQueries).toBe(1)
-
-    const abortController = new AbortController()
-    const earlyResult = await runBackwardCommuteSearch({
-      inventory: subInventory,
-      networkIndex,
-      workplace: POSTAL_WORKPLACE,
-      constraints: {
-        searchDate: SEARCH_DATE,
-        officeStart: '06:30',
-        rideCapMinutes: 20,
-      },
-      probeUncoveredStops: true,
-      minRequestIntervalMs: 0,
-      signal: abortController.signal,
-      routeStop: () => {
-        abortController.abort()
-        return Promise.resolve([])
-      },
-      onProgress: () => {},
-    })
-    expect(earlyResult.status).toBe('partial')
-  })
-
-  it('marks all-failed runs as partial without counting tried stops, while empty responses complete', async () => {
-    const stop65729 = INVENTORY.stops.find((s) => s.id === '65729')
-    const stop69009 = INVENTORY.stops.find((s) => s.id === '69009')
-    if (!stop65729 || !stop69009) {
-      throw new Error('Missing fixture stops')
-    }
-    const subInventory: StopInventory = {
-      inventoryDate: INVENTORY.inventoryDate,
-      stops: [stop65729, stop69009],
-    }
-    const networkIndex = buildTransitNetworkIndex({
-      inventory: subInventory,
-      networkDate: SEARCH_DATE,
-      busServices: {
-        '381': { name: 'Local', routes: [['65729', '69009']] },
-      },
-      busFirstLast: {
-        '65729': ['381 0530 2330 = = = ='],
-        '69009': ['381 0532 2332 = = = ='],
-      },
-    })
-
-    const failedResult = await runBackwardCommuteSearch({
-      inventory: subInventory,
-      networkIndex,
-      workplace: POSTAL_WORKPLACE,
-      constraints: CONSTRAINTS,
-      minRequestIntervalMs: 0,
-      signal: new AbortController().signal,
-      routeStop: () => Promise.reject(new Error('HTTP 500')),
-      onProgress: () => {},
-    })
-    expect(failedResult.status).toBe('partial')
-    expect(failedResult.authExpired).toBe(false)
-    expect(failedResult.triedCount).toBe(0)
-    expect(failedResult.failedQueries).toBeGreaterThan(0)
-    expect(failedResult.matches).toEqual([])
-
-    const emptyResult = await runBackwardCommuteSearch({
-      inventory: subInventory,
-      networkIndex,
-      workplace: POSTAL_WORKPLACE,
-      constraints: CONSTRAINTS,
-      minRequestIntervalMs: 0,
-      signal: new AbortController().signal,
-      routeStop: () => Promise.resolve([]),
-      onProgress: () => {},
-    })
-    expect(emptyResult.status).toBe('completed')
-    expect(emptyResult.triedCount).toBeGreaterThan(0)
-    expect(emptyResult.failedQueries).toBe(0)
-  })
-
-  it('drains transitive hints discovered during the final hint flush', async () => {
-    const subStops = INVENTORY.stops.slice(0, 4)
-    const networkIndex = buildTransitNetworkIndex({
-      inventory: {
-        inventoryDate: INVENTORY.inventoryDate,
-        stops: subStops,
-      },
-      networkDate: SEARCH_DATE,
-      busServices: {
-        '381': {
-          name: 'Local',
-          routes: [['65009', '65701', '65729', '69009']],
+    expect(calls).toEqual([origin.id])
+    expect(result).toMatchObject({
+      status: 'completed',
+      triedCount: 2,
+      matches: [
+        {
+          stop: transfer,
+          journey: { rideMs: 20 * 60_000, arrivalAtMs: time('08:59') },
         },
-      },
-      busFirstLast: {
-        '65009': ['381 0530 2330 = = = ='],
-        '65701': ['381 0535 2335 = = = ='],
-        '65729': ['381 0540 2340 = = = ='],
-        '69009': ['381 0542 2342 = = = ='],
+      ],
+    })
+  })
+
+  it('checks transitive hints after the final planned probe; hints alone never qualify', async () => {
+    const calls: string[] = []
+    const result = await verify({
+      plan: { leads: [lead(origin)], uncoveredStopIds: [] },
+      routeStop: (stop, departure) => {
+        calls.push(`${stop.id}@${departure}`)
+        if (stop.id === last.id) return Promise.resolve([])
+        const next = stop.id === origin.id ? transfer : last
+        const leg = bus(stop, departure.slice(0, 5), '08:52')
+        return Promise.resolve([
+          {
+            startTime: leg.startTime,
+            endTime: leg.endTime,
+            legs: [
+              {
+                ...leg,
+                intermediateStops: [
+                  {
+                    stopCode: next.id,
+                    departure: time(next === transfer ? '08:30' : '08:38'),
+                  },
+                ],
+              },
+            ],
+          },
+        ])
       },
     })
-
-    const hintBMs = sgtMs('08:30:00')
-    const hintCMs = sgtMs('08:38:00')
-    const queried: string[] = []
-    const result = await runBackwardCommuteSearch({
-      inventory: {
-        inventoryDate: INVENTORY.inventoryDate,
-        stops: subStops,
-      },
-      networkIndex,
-      workplace: POSTAL_WORKPLACE,
-      constraints: CONSTRAINTS,
-      maxProbesPerStop: 1,
-      minRequestIntervalMs: 0,
-      signal: new AbortController().signal,
-      routeStop: (stop, depTime) => {
-        queried.push(`${stop.id}@${depTime}`)
-        if (stop.id === '65009') {
-          return Promise.resolve([
-            {
-              startTime: sgtMs('08:25:00'),
-              endTime: sgtMs('08:52:00'),
-              legs: [
-                {
-                  mode: 'BUS',
-                  startTime: sgtMs('08:25:00'),
-                  endTime: sgtMs('08:52:00'),
-                  from: { stopCode: '65009' },
-                  routeShortName: '381',
-                  intermediateStops: [
-                    { stopCode: '65701', arrival: hintBMs, departure: hintBMs },
-                  ],
-                },
-              ],
-            },
-          ])
-        }
-        if (stop.id === '65701' && depTime === '08:30:00') {
-          return Promise.resolve([
-            {
-              startTime: hintBMs,
-              endTime: sgtMs('08:52:00'),
-              legs: [
-                {
-                  mode: 'BUS',
-                  startTime: hintBMs,
-                  endTime: sgtMs('08:52:00'),
-                  from: { stopCode: '65701' },
-                  routeShortName: '381',
-                  intermediateStops: [
-                    { stopCode: '65729', arrival: hintCMs, departure: hintCMs },
-                  ],
-                },
-              ],
-            },
-          ])
-        }
-        if (stop.id === '65729' && depTime === '08:38:00') {
-          return Promise.resolve([
-            makeBusItinerary('65729', '08:38:00', '08:52:00'),
-          ])
-        }
-        return Promise.resolve([])
-      },
-      onProgress: () => {},
-    })
-
-    expect(queried).toContain('65701@08:30:00')
-    expect(queried).toContain('65729@08:38:00')
-    expect(result.matches.map((m) => m.stop.id).sort()).toEqual([
-      '65009',
-      '65701',
-      '65729',
+    expect(calls).toEqual([
+      'origin@08:25:00',
+      'transfer@08:30:00',
+      'last@08:38:00',
+    ])
+    expect(result.matches.map((match) => match.stop.id)).toEqual([
+      origin.id,
+      transfer.id,
     ])
   })
+
+  it('seeds only the exact destination station without a query', async () => {
+    const calls: string[] = []
+    const result = await verify({
+      workplace: {
+        kind: 'station',
+        stationId: destination.id,
+        label: 'Bishan',
+        point,
+      },
+      plan: {
+        leads: [lead(destination), lead(interchange)],
+        uncoveredStopIds: [],
+      },
+      routeStop: (stop) => {
+        calls.push(stop.id)
+        return Promise.resolve([])
+      },
+    })
+    expect(calls).toEqual([interchange.id])
+    expect(result.matches).toMatchObject([
+      { stop: destination, journey: { isAtDestination: true, rideMs: 0 } },
+    ])
+  })
+
+  it('continues to uncovered stops after a failed probe, but stops on auth expiry', async () => {
+    const calls: string[] = []
+    const result = await verify({
+      plan: { leads: [lead(origin)], uncoveredStopIds: [outside.id, last.id] },
+      routeStop: (stop) => {
+        calls.push(stop.id)
+        return Promise.reject(
+          stop.id === outside.id
+            ? new OneMapAuthError()
+            : new Error('HTTP 500'),
+        )
+      },
+    })
+    expect(calls).toEqual([origin.id, outside.id])
+    expect(result).toMatchObject({
+      status: 'partial',
+      authExpired: true,
+      failedQueries: 1,
+      triedCount: 0,
+    })
+  })
+
+  it('stops before the next probe on cancellation', async () => {
+    const controller = new AbortController()
+    const calls: string[] = []
+    const result = await verify({
+      signal: controller.signal,
+      routeStop: (stop) => {
+        calls.push(stop.id)
+        controller.abort()
+        return Promise.resolve([])
+      },
+    })
+    expect(calls).toEqual([origin.id])
+    expect(result.status).toBe('partial')
+  })
+
+  it.each([true, false])(
+    'distinguishes a failed query from an empty plan (failed=%s)',
+    async (failed) => {
+      const result = await verify({
+        routeStop: () =>
+          failed ? Promise.reject(new Error('HTTP 500')) : Promise.resolve([]),
+      })
+      expect(result).toMatchObject({
+        status: failed ? 'partial' : 'completed',
+        authExpired: false,
+        triedCount: failed ? 0 : 2,
+        failedQueries: failed ? 2 : 0,
+        matches: [],
+      })
+    },
+  )
 })

@@ -197,13 +197,36 @@ const signInViaUi = async (page: Page): Promise<void> => {
 }
 
 test.describe('House Hunter PWA acceptance', () => {
+  test.beforeEach(async ({ page, context }) => {
+    await stubTilesAndInventory(page)
+    await context.route('**/api/auth/post/getToken', (route) =>
+      fulfillJson(route, 200, {
+        access_token: 'mock-jwt',
+        expiry_timestamp: 1_900_000_000,
+      }),
+    )
+    await context.route('**/api/common/elastic/search*', (route) => {
+      const postal = new URL(route.request().url()).searchParams.get(
+        'searchVal',
+      )
+      const address = {
+        POSTAL: '018989',
+        LATITUDE: '1.2789',
+        LONGITUDE: '103.8536',
+        ADDRESS: '18 MARINA GARDENS DR',
+      }
+      return fulfillJson(route, 200, {
+        results: postal === address.POSTAL ? [address] : [],
+      })
+    })
+  })
+
   test('reports unreadable sign-in response without blaming password', async ({
     page,
   }) => {
-    await stubTilesAndInventory(page)
-    await page.route('**/api/auth/post/getToken', (route) =>
-      route.abort('failed'),
-    )
+    await page
+      .context()
+      .route('**/api/auth/post/getToken', (route) => route.abort('failed'))
 
     await page.goto('/')
     await page.fill('#onemap-email', 'commuter@example.com')
@@ -219,22 +242,12 @@ test.describe('House Hunter PWA acceptance', () => {
   test('blocks duplicate postal submission during lookup and unlocks after lookup failure', async ({
     page,
   }) => {
-    await stubTilesAndInventory(page)
-    await page.context().route('**/api/auth/post/getToken', (route) =>
-      fulfillJson(route, 200, {
-        access_token: 'mock-jwt',
-        expiry_timestamp: 1_900_000_000,
-      }),
-    )
-
-    const lookupStarted = Promise.withResolvers<void>()
     const lookupGate = Promise.withResolvers<void>()
     let lookupAttempts = 0
     await page
       .context()
       .route('**/api/common/elastic/search*', async (route) => {
         lookupAttempts += 1
-        lookupStarted.resolve()
         await lookupGate.promise
         await fulfillJson(route, 503, { error: 'lookup unavailable' })
       })
@@ -242,10 +255,9 @@ test.describe('House Hunter PWA acceptance', () => {
     await page.goto('/')
     await signInViaUi(page)
     await page.fill('#postal-input', '018989')
-    await page.click('#start-search-btn')
-    await lookupStarted.promise
-
     const startButton = page.locator('#start-search-btn')
+    await startButton.click()
+    await expect.poll(() => lookupAttempts).toBe(1)
     try {
       await expect(startButton).toBeDisabled()
       // Native form submission must also respect the in-flight lookup.
@@ -268,40 +280,15 @@ test.describe('House Hunter PWA acceptance', () => {
 
   test('streams distant-before-nearby patches, supports overlap/disconnected selection, and verifies station identity', async ({
     page,
+    context,
   }) => {
     test.setTimeout(60_000)
     await page.clock.install({ time: new Date('2026-05-29T09:00:00+08:00') })
-    await stubTilesAndInventory(page)
-
-    await page.route('**/api/auth/post/getToken', (route) =>
-      fulfillJson(route, 200, {
-        access_token: 'mock-jwt',
-        expiry_timestamp: 1_900_000_000,
-      }),
-    )
-
-    await page.route('**/api/common/elastic/search*', (route) => {
-      const url = new URL(route.request().url())
-      const postal = url.searchParams.get('searchVal')
-      return fulfillJson(route, 200, {
-        results:
-          postal === '018989'
-            ? [
-                {
-                  POSTAL: '018989',
-                  LATITUDE: '1.2789',
-                  LONGITUDE: '103.8536',
-                  ADDRESS: '18 MARINA GARDENS DR',
-                },
-              ]
-            : [],
-      })
-    })
 
     const pass2Gate = Promise.withResolvers<void>()
     const postalAttempts = new Map<string, number>()
 
-    await page.route('**/api/public/routingsvc/route*', (route) =>
+    await context.route('**/api/public/routingsvc/route*', (route) =>
       handlePostalSearchRoute(route, pass2Gate.promise, postalAttempts),
     )
 
@@ -396,18 +383,15 @@ test.describe('House Hunter PWA acceptance', () => {
     // Station workplace test: choose NS17, verify NS17 qualifies at 09:00 with 0 min ride & 0 routing calls,
     // CC15 at the same point does NOT auto-qualify, and 65009 qualifies via bus+walk.
     const routeRequestsToStationCoords: string[] = []
-    const stationAttempts = new Map<string, number>()
-    await page.unroute('**/api/public/routingsvc/route*')
-    await page.route('**/api/public/routingsvc/route*', (route) => {
+    await context.unroute('**/api/public/routingsvc/route*')
+    await context.route('**/api/public/routingsvc/route*', (route) => {
       const url = new URL(route.request().url())
       const start = url.searchParams.get('start') ?? ''
       const time = url.searchParams.get('time') ?? ''
-      const attempt = (stationAttempts.get(start) ?? 0) + 1
-      stationAttempts.set(start, attempt)
       if (start.startsWith('1.3514')) {
         routeRequestsToStationCoords.push(`${start}@${time}`)
       }
-      if (attempt === 1 && start.startsWith('1.4036')) {
+      if (start.startsWith('1.4036')) {
         return fulfillJson(route, 200, {
           plan: {
             itineraries: [
@@ -470,33 +454,10 @@ test.describe('House Hunter PWA acceptance', () => {
   }) => {
     test.setTimeout(60_000)
     await page.clock.install({ time: new Date('2026-05-29T09:00:00+08:00') })
-    await stubTilesAndInventory(page)
-
-    await page.route('**/api/auth/post/getToken', (route) =>
-      fulfillJson(route, 200, {
-        access_token: 'mock-jwt',
-        expiry_timestamp: 1_900_000_000,
-      }),
-    )
-    await page.route('**/api/common/elastic/search*', (route) =>
-      fulfillJson(route, 200, {
-        results: [
-          {
-            POSTAL: '018989',
-            LATITUDE: '1.2789',
-            LONGITUDE: '103.8536',
-            ADDRESS: '18 MARINA GARDENS DR',
-          },
-        ],
-      }),
-    )
-    const offlineSearchAttempts = new Map<string, number>()
-    await page.route('**/api/public/routingsvc/route*', (route) => {
+    await context.route('**/api/public/routingsvc/route*', (route) => {
       const url = new URL(route.request().url())
       const start = url.searchParams.get('start') ?? ''
-      const attempt = (offlineSearchAttempts.get(start) ?? 0) + 1
-      offlineSearchAttempts.set(start, attempt)
-      if (attempt === 1 && start.startsWith('1.4036')) {
+      if (start.startsWith('1.4036')) {
         return fulfillJson(route, 200, {
           plan: {
             itineraries: [
@@ -533,8 +494,8 @@ test.describe('House Hunter PWA acceptance', () => {
     })
 
     // Search B: start station search with a held request, then click Stop search -> Partial result.
-    await page.unroute('**/api/public/routingsvc/route*')
-    await page.route('**/api/public/routingsvc/route*', async (route) => {
+    await context.unroute('**/api/public/routingsvc/route*')
+    await context.route('**/api/public/routingsvc/route*', async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 250))
       await fulfillJson(route, 200, { plan: { itineraries: [] } })
     })
@@ -584,56 +545,41 @@ test.describe('House Hunter PWA acceptance', () => {
       page.locator('.stop-row-btn[data-stop-id="65009"]'),
     ).toBeVisible()
 
-    // Go back online, start Search B again, and simulate closing/reloading mid-search -> Search A still survives offline!
-    await context.setOffline(false)
-    await page.reload()
-    await signInViaUi(page)
-    await page.click('input[name="workplace-kind"][value="station"]')
-    await page.selectOption('#station-select', 'NS17')
-    await page.click('#start-search-btn')
-    await expect(page.locator('#stop-search-btn')).toBeVisible()
-
-    await context.setOffline(true)
-    await page.reload()
-    await expect(page.locator('#active-constraints-summary')).toContainText(
-      'Postal 018989',
-    )
-    await expect(
-      page.locator('.stop-row-btn[data-stop-id="65009"]'),
-    ).toBeVisible()
-
-    // Search C: if every OneMap routing request fails (HTTP 400), treat as Partial result and keep Search A offline.
-    await context.setOffline(false)
-    await page.reload()
-    await signInViaUi(page)
-    await page.unroute('**/api/public/routingsvc/route*')
-    await page.route('**/api/public/routingsvc/route*', (route) =>
-      fulfillJson(route, 400, { error: 'upstream outage' }),
-    )
-    await page.click('input[name="workplace-kind"][value="station"]')
-    await page.selectOption('#station-select', 'NS17')
-    await page.fill('#office-start-input', '08:30')
-    await page.fill('#ride-cap-input', '15')
-    await page.click('#start-search-btn')
-    await expect(page.locator('#result-status-tag')).toHaveText(
-      'Partial result',
-      { timeout: 25_000 },
-    )
-    await expect(page.locator('#search-error')).toBeVisible()
-    await expect(page.locator('#search-error')).toContainText(
-      'was not saved offline',
-    )
-
-    await context.setOffline(true)
-    await page.reload()
-    await expect(page.locator('#result-status-tag')).toHaveText(
-      'Saved offline result',
-    )
-    await expect(page.locator('#active-constraints-summary')).toContainText(
-      'Postal 018989',
-    )
-    await expect(
-      page.locator('.stop-row-btn[data-stop-id="65009"]'),
-    ).toBeVisible()
+    // Neither closing a running search nor failed OneMap requests may replace Search A.
+    for (const interruption of ['reload', 'routing failure']) {
+      await context.setOffline(false)
+      await page.reload()
+      await signInViaUi(page)
+      if (interruption === 'routing failure') {
+        await context.route('**/api/public/routingsvc/route*', (route) =>
+          fulfillJson(route, 400, { error: 'upstream outage' }),
+        )
+      }
+      await page.click('input[name="workplace-kind"][value="station"]')
+      await page.selectOption('#station-select', 'NS17')
+      await page.click('#start-search-btn')
+      if (interruption === 'reload') {
+        await expect(page.locator('#stop-search-btn')).toBeVisible()
+      } else {
+        await expect(page.locator('#result-status-tag')).toHaveText(
+          'Partial result',
+          { timeout: 25_000 },
+        )
+        await expect(page.locator('#search-error')).toContainText(
+          'was not saved offline',
+        )
+      }
+      await context.setOffline(true)
+      await page.reload()
+      await expect(page.locator('#result-status-tag')).toHaveText(
+        'Saved offline result',
+      )
+      await expect(page.locator('#active-constraints-summary')).toContainText(
+        'Postal 018989',
+      )
+      await expect(
+        page.locator('.stop-row-btn[data-stop-id="65009"]'),
+      ).toBeVisible()
+    }
   })
 })

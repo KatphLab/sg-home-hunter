@@ -69,17 +69,6 @@ const extractBoardingStopId = (leg: Record<string, unknown>): string => {
   throw new Error('Malformed transit leg: missing boarding stop identifier')
 }
 
-const extractOptionalBoardingStopId = (
-  leg: Record<string, unknown>,
-): string | null => {
-  const from = leg['from']
-  if (!isRecord(from)) {
-    return null
-  }
-  const id = readStopId(from)
-  return id && id.length > 0 ? id : null
-}
-
 const extractService = (
   leg: Record<string, unknown>,
   mode: TransitMode,
@@ -103,7 +92,6 @@ interface ParsedLeg {
   readonly mode: string
   readonly service: JourneyService | null
   readonly stopId: string | null
-  readonly interlined: boolean
 }
 
 const parseLegTiming = (
@@ -156,18 +144,9 @@ const inspectLegs = (
       leg.record,
       'interlineWithPreviousLeg',
     )
-    let stopId: string | null = null
-    if (service !== null) {
-      stopId = interlined
-        ? extractOptionalBoardingStopId(leg.record)
-        : extractBoardingStopId(leg.record)
-    }
-    return {
-      ...leg,
-      service,
-      stopId,
-      interlined,
-    }
+    const stopId =
+      service && !interlined ? extractBoardingStopId(leg.record) : null
+    return { ...leg, service, stopId }
   })
 }
 
@@ -296,7 +275,7 @@ const collectBoardings = (
     if (leg.mode === 'WALK') {
       continue
     }
-    if (leg.service === null || (!leg.interlined && leg.stopId === null)) {
+    if (leg.service === null) {
       break
     }
     const earliestDeparture = Math.max(
@@ -310,7 +289,6 @@ const collectBoardings = (
       break
     }
     if (
-      !leg.interlined &&
       leg.stopId !== null &&
       getSingaporeDateFromInstant(leg.startTime) === constraints.searchDate
     ) {

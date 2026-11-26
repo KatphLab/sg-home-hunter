@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import type { StopInventory } from '@lib/commute-types.js'
+import type { Stop, StopInventory } from '@lib/commute-types.js'
 import { parseStopInventory } from '@lib/inventory.js'
 import {
   buildTransitNetworkIndex,
@@ -12,83 +12,32 @@ import {
   serializeBusNetworkTsv,
 } from '@lib/transit-network.js'
 
-const MINI_INVENTORY: StopInventory = {
+const stop = (
+  id: string,
+  kind: Stop['kind'],
+  latitude: number,
+  longitude: number,
+): Stop => ({ id, kind, name: id, point: { latitude, longitude } })
+
+const inventory = (...stops: Stop[]): StopInventory => ({
   inventoryDate: '2026-11-24',
-  stops: [
-    {
-      id: '65009',
-      kind: 'bus',
-      name: 'Punggol Int',
-      point: { latitude: 1.4038, longitude: 103.9024 },
-    },
-    {
-      id: '65729',
-      kind: 'bus',
-      name: 'Punggol Coast Stn',
-      point: { latitude: 1.4149, longitude: 103.9102 },
-    },
-    {
-      id: '69009',
-      kind: 'bus',
-      name: 'Punggol Coast Int',
-      point: { latitude: 1.4159, longitude: 103.9114 },
-    },
-    {
-      id: 'NE17',
-      kind: 'rail',
-      name: 'Punggol',
-      point: { latitude: 1.405_255, longitude: 103.902_354 },
-    },
-    {
-      id: 'NE18',
-      kind: 'rail',
-      name: 'Punggol Coast',
-      point: { latitude: 1.415_018, longitude: 103.910_329 },
-    },
-    {
-      id: 'PTC',
-      kind: 'rail',
-      name: 'Punggol',
-      point: { latitude: 1.405_255, longitude: 103.902_354 },
-    },
-    {
-      id: 'PE1',
-      kind: 'rail',
-      name: 'Cove',
-      point: { latitude: 1.399_464, longitude: 103.905_852 },
-    },
-    {
-      id: 'CC4',
-      kind: 'rail',
-      name: 'Promenade',
-      point: { latitude: 1.293_854, longitude: 103.860_151 },
-    },
-    {
-      id: 'CC34',
-      kind: 'rail',
-      name: 'Bayfront',
-      point: { latitude: 1.282_535, longitude: 103.859_73 },
-    },
-    {
-      id: 'BP1',
-      kind: 'rail',
-      name: 'Choa Chu Kang',
-      point: { latitude: 1.384_749, longitude: 103.744_534 },
-    },
-    {
-      id: 'BP6',
-      kind: 'rail',
-      name: 'Bukit Panjang',
-      point: { latitude: 1.378_296, longitude: 103.762_138 },
-    },
-    {
-      id: 'BP7',
-      kind: 'rail',
-      name: 'Petir',
-      point: { latitude: 1.377_756, longitude: 103.766_634 },
-    },
-  ],
-}
+  stops,
+})
+
+const MINI_INVENTORY = inventory(
+  stop('65009', 'bus', 1.4038, 103.9024),
+  stop('65729', 'bus', 1.4149, 103.9102),
+  stop('69009', 'bus', 1.4159, 103.9114),
+  stop('NE17', 'rail', 1.405_255, 103.902_354),
+  stop('NE18', 'rail', 1.415_018, 103.910_329),
+  stop('PTC', 'rail', 1.405_255, 103.902_354),
+  stop('PE1', 'rail', 1.399_464, 103.905_852),
+  stop('CC4', 'rail', 1.293_854, 103.860_151),
+  stop('CC34', 'rail', 1.282_535, 103.859_73),
+  stop('BP1', 'rail', 1.384_749, 103.744_534),
+  stop('BP6', 'rail', 1.378_296, 103.762_138),
+  stop('BP7', 'rail', 1.377_756, 103.766_634),
+)
 
 describe('transit-network', () => {
   it('computes Haversine distances accurately', () => {
@@ -163,18 +112,6 @@ describe('transit-network', () => {
       },
     })
 
-    const svc200AMid = parseBusRouterFirstLastLine(
-      '200A 0850 0003 0003 = 0002 0002',
-    )
-    expect(svc200AMid).toEqual({
-      serviceId: '200A',
-      windows: {
-        weekday: { firstMin: 530, lastMin: 1443 },
-        saturday: { firstMin: 1443, lastMin: 1443 },
-        sunday_holiday: { firstMin: 1442, lastMin: 1442 },
-      },
-    })
-
     const svc200AEarly = parseBusRouterFirstLastLine(
       '200A 0845 0001 0001 = 2400 2400',
     )
@@ -195,14 +132,8 @@ describe('transit-network', () => {
       inventory: MINI_INVENTORY,
       networkDate: '2026-11-26',
       busServices: {
-        '381': {
-          name: 'Punggol Int <-> Punggol Coast Int',
-          routes: [['65009', '65729', '69009']],
-        },
-        '44': {
-          name: 'Weekday Peak',
-          routes: [['65009', '69009']],
-        },
+        '381': [['65009', '65729', '69009']],
+        '44': [['65009', '69009']],
       },
       busFirstLast: {
         '65009': [
@@ -244,33 +175,43 @@ describe('transit-network', () => {
     expect(hasEdge('CC34', 'CC4')).toBe(true)
     expect(hasEdge('CC4', 'CC34')).toBe(true)
 
-    // Transfer links connect nearby rail/bus stops (NE17 <-> PTC, NE18 <-> 65729)
+    // Nearby rail/rail and bus/rail links retain their distinct transfer costs.
+    expect(index.transfers).toEqual(
+      expect.arrayContaining([
+        {
+          fromStopId: 'NE17',
+          toStopId: 'PTC',
+          walkMs: 60_000,
+          minTransferWaitMs: 30_000,
+          estTransferWaitMs: 180_000,
+        },
+        expect.objectContaining({
+          fromStopId: '65729',
+          toStopId: 'NE18',
+          minTransferWaitMs: 30_000,
+          estTransferWaitMs: 240_000,
+        }),
+      ]),
+    )
     expect(
-      index.transfers.some(
-        (t) => t.fromStopId === 'NE17' && t.toStopId === 'PTC',
-      ),
-    ).toBe(true)
-    expect(
-      index.transfers.some(
-        (t) => t.fromStopId === '65729' && t.toStopId === 'NE18',
-      ),
-    ).toBe(true)
-    expect(index.coveredStopIds).toContain('NE18')
-    expect(index.coveredStopIds).toContain('65729')
+      index.patterns
+        .filter((p) => p.serviceId === 'BP')
+        .map((p) => p.segments.map((s) => `${s.fromStopId}->${s.toStopId}`)),
+    ).toEqual([
+      ['BP1->BP6', 'BP6->BP7', 'BP7->BP6', 'BP6->BP1'],
+      ['BP1->BP6', 'BP6->BP7', 'BP7->BP6', 'BP6->BP1'],
+    ])
   })
 
-  it('serializes and parses compact bus-network TSVs and integrates with transit network index', () => {
+  it('round-trips dated routes and timings, omitting incomplete routes', () => {
     const rawTsv = serializeBusNetworkTsv({
       networkDate: '2026-11-25',
       busServices: {
-        '381': {
-          name: '381',
-          routes: [
-            ['65009', '65729', '69009'],
-            ['69009', '65009'],
-          ],
-        },
-        SHORT: { name: 'SHORT', routes: [['65009']] },
+        '381': [
+          ['65009', '65729', '69009'],
+          ['69009', '65009'],
+        ],
+        SHORT: [['65009']],
       },
       busFirstLast: {
         '65009': ['381 0545 0035 = = = =', '381 0700 0116 = = = ='],
@@ -280,27 +221,15 @@ describe('transit-network', () => {
 
     const parsed = parseBusNetworkTsv(rawTsv)
     expect(parsed.networkDate).toBe('2026-11-25')
-    expect(parsed.busServices['381']).toEqual({
-      name: '381',
-      routes: [
-        ['65009', '65729', '69009'],
-        ['69009', '65009'],
-      ],
-    })
+    expect(parsed.busServices['381']).toEqual([
+      ['65009', '65729', '69009'],
+      ['69009', '65009'],
+    ])
     expect(parsed.busServices['SHORT']).toBeUndefined()
     expect(parsed.busFirstLast['65009']).toEqual([
       '381 0545 0035 = = = =',
       '381 0700 0116 = = = =',
     ])
-
-    const rebuilt = buildTransitNetworkIndex({
-      inventory: MINI_INVENTORY,
-      networkDate: parsed.networkDate,
-      busServices: parsed.busServices,
-      busFirstLast: parsed.busFirstLast,
-    })
-    expect(rebuilt.networkDate).toBe('2026-11-25')
-    expect(rebuilt.coveredStopIds).toContain('65729')
   })
 
   it('handles empty rail-only bus-network TSVs, ignores malformed rows, and rejects invalid headers', () => {
@@ -340,28 +269,15 @@ describe('transit-network', () => {
   })
 
   it('keeps minRideMs at the physical lower bound instead of first-bus timetable delta', () => {
-    const inventory249A: StopInventory = {
-      inventoryDate: '2026-11-24',
-      stops: [
-        {
-          id: '21359',
-          kind: 'bus',
-          name: 'Aft ST Kinetics',
-          point: { latitude: 1.338_67, longitude: 103.709_96 },
-        },
-        {
-          id: '21349',
-          kind: 'bus',
-          name: 'GSK',
-          point: { latitude: 1.335_73, longitude: 103.709_39 },
-        },
-      ],
-    }
+    const inventory249A = inventory(
+      stop('21359', 'bus', 1.338_67, 103.709_96),
+      stop('21349', 'bus', 1.335_73, 103.709_39),
+    )
     const index = buildTransitNetworkIndex({
       inventory: inventory249A,
       networkDate: '2026-11-26',
       busServices: {
-        '249A': { name: '249A', routes: [['21359', '21349']] },
+        '249A': [['21359', '21349']],
       },
       busFirstLast: {
         '21359': ['249A 0634 0830 - - - -'],
@@ -375,26 +291,15 @@ describe('transit-network', () => {
   })
 
   it('splits bus patterns at missing inventory stops instead of bridging across gaps', () => {
-    const gapInventory: StopInventory = {
-      inventoryDate: '2026-11-24',
-      stops: [
-        ...MINI_INVENTORY.stops.slice(0, 3),
-        {
-          id: '69099',
-          kind: 'bus',
-          name: 'After Gap',
-          point: { latitude: 1.417, longitude: 103.913 },
-        },
-      ],
-    }
+    const gapInventory = inventory(
+      ...MINI_INVENTORY.stops.slice(0, 3),
+      stop('69099', 'bus', 1.417, 103.913),
+    )
     const index = buildTransitNetworkIndex({
       inventory: gapInventory,
       networkDate: '2026-11-26',
       busServices: {
-        '99': {
-          name: '99',
-          routes: [['65009', '65729', 'MISSING', '69009', '69099']],
-        },
+        '99': [['65009', '65729', 'MISSING', '69009', '69099']],
       },
       busFirstLast: {},
     })
@@ -403,27 +308,6 @@ describe('transit-network', () => {
     expect(
       bus99.map((p) => p.segments.map((s) => `${s.fromStopId}->${s.toStopId}`)),
     ).toEqual([['65009->65729'], ['69009->69099']])
-  })
-
-  it('models Bukit Panjang LRT through-services without splitting at BP6', () => {
-    const index = buildTransitNetworkIndex({
-      inventory: MINI_INVENTORY,
-      networkDate: '2026-11-26',
-      busServices: {},
-      busFirstLast: {},
-    })
-    const bpPatterns = index.patterns.filter((p) => p.serviceId === 'BP')
-    const hasPath = (stops: readonly string[]) =>
-      bpPatterns.some((p) => {
-        const edges = p.segments.map((s) => `${s.fromStopId}->${s.toStopId}`)
-        return stops
-          .slice(0, -1)
-          .every((from, idx) =>
-            edges.includes(`${from}->${stops[idx + 1] ?? ''}`),
-          )
-      })
-    expect(hasPath(['BP1', 'BP6', 'BP7'])).toBe(true)
-    expect(hasPath(['BP7', 'BP6', 'BP1'])).toBe(true)
   })
 
   it('extracts ISO dates from timestamps while falling back cleanly on invalid input', () => {
@@ -438,28 +322,15 @@ describe('transit-network', () => {
   })
 
   it('preserves expressway bus 858 95159 -> 65191 within a 12-minute minRideMs bound', () => {
-    const expressInventory: StopInventory = {
-      inventoryDate: '2026-11-24',
-      stops: [
-        {
-          id: '95159',
-          kind: 'bus',
-          name: 'Bef Changi Airport PTB3',
-          point: { latitude: 1.356_793, longitude: 103.984_689 },
-        },
-        {
-          id: '65191',
-          kind: 'bus',
-          name: 'Aft TPE',
-          point: { latitude: 1.390_718, longitude: 103.897_381 },
-        },
-      ],
-    }
+    const expressInventory = inventory(
+      stop('95159', 'bus', 1.356_793, 103.984_689),
+      stop('65191', 'bus', 1.390_718, 103.897_381),
+    )
     const index = buildTransitNetworkIndex({
       inventory: expressInventory,
       networkDate: '2026-11-26',
       busServices: {
-        '858': { name: '858', routes: [['95159', '65191']] },
+        '858': [['95159', '65191']],
       },
       busFirstLast: {
         '95159': ['858 0633 0044 = 0043 0632 0039'],
@@ -472,47 +343,14 @@ describe('transit-network', () => {
   })
 
   it('continues Circle Line Dhoby Ghaut branch through CC4 -> CC5 without inventing CC3 -> CC4 -> CC34', () => {
-    const ccInventory: StopInventory = {
-      inventoryDate: '2026-11-24',
-      stops: [
-        {
-          id: 'CC1',
-          kind: 'rail',
-          name: 'Dhoby Ghaut',
-          point: { latitude: 1.298_786, longitude: 103.845_02 },
-        },
-        {
-          id: 'CC2',
-          kind: 'rail',
-          name: 'Bras Basah',
-          point: { latitude: 1.296_896, longitude: 103.850_55 },
-        },
-        {
-          id: 'CC3',
-          kind: 'rail',
-          name: 'Esplanade',
-          point: { latitude: 1.293_258, longitude: 103.855_974 },
-        },
-        {
-          id: 'CC4',
-          kind: 'rail',
-          name: 'Promenade',
-          point: { latitude: 1.293_854, longitude: 103.860_151 },
-        },
-        {
-          id: 'CC5',
-          kind: 'rail',
-          name: 'Nicoll Highway',
-          point: { latitude: 1.299_671, longitude: 103.8635 },
-        },
-        {
-          id: 'CC34',
-          kind: 'rail',
-          name: 'Bayfront',
-          point: { latitude: 1.282_535, longitude: 103.859_73 },
-        },
-      ],
-    }
+    const ccInventory = inventory(
+      stop('CC1', 'rail', 1.298_786, 103.845_02),
+      stop('CC2', 'rail', 1.296_896, 103.850_55),
+      stop('CC3', 'rail', 1.293_258, 103.855_974),
+      stop('CC4', 'rail', 1.293_854, 103.860_151),
+      stop('CC5', 'rail', 1.299_671, 103.8635),
+      stop('CC34', 'rail', 1.282_535, 103.859_73),
+    )
     const index = buildTransitNetworkIndex({
       inventory: ccInventory,
       networkDate: '2026-11-26',

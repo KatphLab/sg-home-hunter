@@ -6,7 +6,6 @@ import {
   RAIL_ID_PATTERN,
 } from '@lib/inventory.js'
 import {
-  type BusRouterServiceEntry,
   parseBusNetworkDate,
   serializeBusNetworkTsv,
 } from '@lib/transit-network.js'
@@ -154,23 +153,18 @@ const parseServiceRoutes = (rawRoutes: unknown): string[][] => {
   return routes
 }
 
-const parseBusServicesJson = (
-  raw: unknown,
-): Record<string, BusRouterServiceEntry> => {
+const parseBusServicesJson = (raw: unknown): Record<string, string[][]> => {
   if (!isRecord(raw)) {
     throw new Error('Unexpected bus services JSON payload')
   }
-  const services: Record<string, BusRouterServiceEntry> = {}
+  const services: Record<string, string[][]> = {}
   for (const [serviceId, entry] of Object.entries(raw)) {
     if (!isRecord(entry)) {
       continue
     }
     const routes = parseServiceRoutes(entry['routes'])
     if (routes.length > 0) {
-      services[serviceId] = {
-        name: typeof entry['name'] === 'string' ? entry['name'] : serviceId,
-        routes,
-      }
+      services[serviceId] = routes
     }
   }
   return services

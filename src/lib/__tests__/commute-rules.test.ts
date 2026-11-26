@@ -29,9 +29,7 @@ const STOP_CC15: Stop = {
 }
 
 const sgtMs = (clock: string, offsetMs = 0): number =>
-  parseSingaporeDateTimeMs(SEARCH_DATE, clock.slice(0, 5)) +
-  Number(clock.slice(6) || 0) * 1000 +
-  offsetMs
+  parseSingaporeDateTimeMs(SEARCH_DATE, clock) + offsetMs
 
 describe('station identity rules', () => {
   it('qualifies only exact destination station ID and not another line ID at same point', () => {
@@ -59,8 +57,8 @@ describe('station identity rules', () => {
     )
     expect(journey.isAtDestination).toBe(true)
     expect(journey.rideMs).toBe(0)
-    expect(journey.boardingAtMs).toBe(sgtMs('09:00:00'))
-    expect(journey.arrivalAtMs).toBe(sgtMs('09:00:00'))
+    expect(journey.boardingAtMs).toBe(sgtMs('09:00'))
+    expect(journey.arrivalAtMs).toBe(sgtMs('09:00'))
     expect(journey.services).toEqual([])
   })
 })
@@ -93,9 +91,10 @@ const singleRide = (startMs: number, rideMs: number, finalWalkMs = 0) => ({
 describe('boarding qualification rules', () => {
   it('qualifies actual boarding origins with only their remaining ride and services', () => {
     const result = evaluateBoardings(CONSTRAINTS, {
-      startTime: sgtMs('08:20'),
+      startTime: sgtMs('08:15'),
       endTime: sgtMs('08:58'),
       legs: [
+        { mode: 'WALK', startTime: sgtMs('08:15'), endTime: sgtMs('08:20') },
         busLeg(sgtMs('08:20'), sgtMs('08:35')),
         { mode: 'WALK', startTime: sgtMs('08:35'), endTime: sgtMs('08:40') },
         {
@@ -154,18 +153,6 @@ describe('boarding qualification rules', () => {
     },
   )
 
-  it('uses the boarding origin after an initial walk, not the queried origin', () => {
-    const result = evaluateBoardings(CONSTRAINTS, {
-      startTime: sgtMs('08:20'),
-      endTime: sgtMs('08:50'),
-      legs: [
-        { mode: 'WALK', startTime: sgtMs('08:20'), endTime: sgtMs('08:25') },
-        busLeg(sgtMs('08:25'), sgtMs('08:50'), '65009'),
-      ],
-    })
-    expect(result.journeys.map((journey) => journey.stopId)).toEqual(['65009'])
-  })
-
   it.each([null, ''])(
     'supports stopId suffix fallback for stopCode %s',
     (stopCode) => {
@@ -190,32 +177,30 @@ describe('boarding qualification rules', () => {
     },
   )
 
-  it('qualifies downstream even when an earlier ride exceeds the cap or crosses dates', () => {
+  it('qualifies a transfer after midnight but not the previous-date boarding', () => {
     const previousDay = Date.parse('2026-06-01T23:55:00+08:00')
-    const result = evaluateBoardings(CONSTRAINTS, {
-      startTime: previousDay,
-      endTime: sgtMs('08:55'),
-      legs: [
-        busLeg(previousDay, sgtMs('08:40')),
-        busLeg(sgtMs('08:45'), sgtMs('08:55'), '65009'),
-      ],
-    })
+    const result = evaluateBoardings(
+      { ...CONSTRAINTS, officeStart: '00:15' },
+      {
+        startTime: previousDay,
+        endTime: sgtMs('00:10'),
+        legs: [
+          busLeg(previousDay, sgtMs('00:00')),
+          busLeg(sgtMs('00:00'), sgtMs('00:10'), '65009'),
+        ],
+      },
+    )
     expect(result.journeys.map((journey) => journey.stopId)).toEqual(['65009'])
     expect(result.journeys[0]?.rideMs).toBe(600_000)
   })
 
-  it('rejects a previous-date boarding and a different-date arrival', () => {
-    const previousDay = Date.parse('2026-06-01T23:55:00+08:00')
+  it('rejects arrival before midnight even inside the 15-minute window', () => {
+    const previousDay = sgtMs('23:45') - 86_400_000
     expect(
-      evaluateBoardings(CONSTRAINTS, {
-        startTime: previousDay,
-        endTime: sgtMs('08:50'),
-        legs: [busLeg(previousDay, sgtMs('08:50'))],
-      }),
-    ).toEqual({ journeys: [], hints: [] })
-    const nextDay = sgtMs('08:30') + 86_400_000
-    expect(
-      evaluateBoardings(CONSTRAINTS, singleRide(nextDay, 20 * 60_000)),
+      evaluateBoardings(
+        { ...CONSTRAINTS, officeStart: '00:05' },
+        singleRide(previousDay, 10 * 60_000),
+      ),
     ).toEqual({ journeys: [], hints: [] })
   })
 
@@ -233,10 +218,7 @@ describe('boarding qualification rules', () => {
           interlineWithPreviousLeg: true,
         },
         {
-          mode: 'BUS',
-          startTime: sgtMs('08:50'),
-          endTime: sgtMs('08:50'),
-          from: {},
+          ...busLeg(sgtMs('08:50'), sgtMs('08:50'), 'not-a-boarding'),
           routeShortName: '88B',
           interlineWithPreviousLeg: true,
         },

@@ -71,7 +71,6 @@ export interface RunBackwardSearchOptions {
   readonly onProgress: (progress: SearchProgress) => void
   readonly minRequestIntervalMs?: number
   readonly delayFn?: DelayLike
-  readonly probeUncoveredStops?: boolean
 }
 
 interface VerificationTracker {
@@ -174,16 +173,6 @@ const recordSingleItinerary = (
   }
 }
 
-const applyEvaluatedBoardings = (
-  itineraries: readonly unknown[],
-  constraints: SearchConstraints,
-  tracker: VerificationTracker,
-): void => {
-  for (const raw of itineraries) {
-    recordSingleItinerary(raw, constraints, tracker)
-  }
-}
-
 const verifyStopDeparture = async (
   stop: Stop,
   departureTime: string,
@@ -212,7 +201,9 @@ const verifyStopDeparture = async (
       options.signal,
     )
     tracker.triedStopIds.add(stop.id)
-    applyEvaluatedBoardings(itineraries, options.constraints, tracker)
+    for (const raw of itineraries) {
+      recordSingleItinerary(raw, options.constraints, tracker)
+    }
     publishSnapshot(tracker, passNumber)
     return 'ok'
   } catch (error) {
@@ -229,47 +220,31 @@ const verifyStopDeparture = async (
   }
 }
 
-const flushHintBatch = async (
-  entries: readonly (readonly [string, string])[],
-  passNumber: number,
-  options: RunBackwardSearchOptions,
-  tracker: VerificationTracker,
-): Promise<'ok' | 'stop'> => {
-  for (const [stopId, departureTime] of entries) {
-    if (options.signal.aborted) {
-      return 'stop'
-    }
-    const stop = tracker.inventoryById.get(stopId)
-    if (!stop || tracker.qualifiedByStopId.has(stopId)) {
-      continue
-    }
-    if (
-      (await verifyStopDeparture(
-        stop,
-        departureTime,
-        passNumber,
-        options,
-        tracker,
-      )) === 'stop'
-    ) {
-      return 'stop'
-    }
-  }
-  return 'ok'
-}
-
 const flushQueuedHints = async (
   passNumber: number,
   options: RunBackwardSearchOptions,
   tracker: VerificationTracker,
 ): Promise<'ok' | 'stop'> => {
   while (tracker.queuedHints.size > 0) {
-    const entries = [...tracker.queuedHints.entries()]
+    const entries = [...tracker.queuedHints]
     tracker.queuedHints.clear()
-    if (
-      (await flushHintBatch(entries, passNumber, options, tracker)) === 'stop'
-    ) {
-      return 'stop'
+    for (const [stopId, departureTime] of entries) {
+      if (options.signal.aborted) {
+        return 'stop'
+      }
+      const stop = tracker.inventoryById.get(stopId)
+      if (
+        stop &&
+        (await verifyStopDeparture(
+          stop,
+          departureTime,
+          passNumber,
+          options,
+          tracker,
+        )) === 'stop'
+      ) {
+        return 'stop'
+      }
     }
   }
   return 'ok'
@@ -277,15 +252,15 @@ const flushQueuedHints = async (
 
 const buildAllLeads = (
   options: RunBackwardSearchOptions,
+  stopsById: ReadonlyMap<string, Stop>,
 ): readonly BackwardLead[] => {
   const plan = options.plan
   if (!plan) return []
 
-  if (!options.probeUncoveredStops || plan.uncoveredStopIds.length === 0) {
+  if (plan.uncoveredStopIds.length === 0) {
     return plan.leads
   }
 
-  const stopsById = new Map(options.inventory.stops.map((s) => [s.id, s]))
   const fallbackSchedule = buildFallbackSchedule(
     options.constraints.officeStart,
     options.constraints.rideCapMinutes,
@@ -341,7 +316,8 @@ const runVerificationPass = async (
 export const runBackwardCommuteSearch = async (
   options: RunBackwardSearchOptions,
 ): Promise<SearchRunResult> => {
-  const leads = buildAllLeads(options)
+  const inventoryById = new Map(options.inventory.stops.map((s) => [s.id, s]))
+  const leads = buildAllLeads(options, inventoryById)
   const maxPasses = leads.reduce(
     (max, lead) => Math.max(max, lead.candidateDepartures.length),
     0,
@@ -349,7 +325,7 @@ export const runBackwardCommuteSearch = async (
   const tracker: VerificationTracker = {
     triedStopIds: new Set<string>(),
     qualifiedByStopId: new Map<string, QualifiedStop>(),
-    inventoryById: new Map(options.inventory.stops.map((s) => [s.id, s])),
+    inventoryById,
     queriedKeys: new Set<string>(),
     queuedHints: new Map<string, string>(),
     hintedStopIds: new Set<string>(),

@@ -77,18 +77,12 @@ export interface TransitNetworkIndex {
   readonly provenance: readonly NetworkProvenance[]
   readonly patterns: readonly TransitPattern[]
   readonly transfers: readonly TransferLink[]
-  readonly coveredStopIds: readonly string[]
-}
-
-export interface BusRouterServiceEntry {
-  readonly name: string
-  readonly routes: readonly (readonly string[])[]
 }
 
 interface BuildTransitNetworkInput {
   readonly inventory: StopInventory
   readonly networkDate: string
-  readonly busServices: Readonly<Record<string, BusRouterServiceEntry>>
+  readonly busServices: Readonly<Record<string, readonly (readonly string[])[]>>
   readonly busFirstLast: Readonly<Record<string, readonly string[]>>
   readonly maxTransferWalkMeters?: number
 }
@@ -100,7 +94,7 @@ interface ParsedFirstLastEntry {
 
 export interface ParsedBusNetworkData {
   readonly networkDate: string
-  readonly busServices: Readonly<Record<string, BusRouterServiceEntry>>
+  readonly busServices: Readonly<Record<string, readonly (readonly string[])[]>>
   readonly busFirstLast: Readonly<Record<string, readonly string[]>>
 }
 
@@ -120,16 +114,16 @@ const sanitizeTsvToken = (raw: string): string =>
 
 const appendServiceLines = (
   lines: string[],
-  busServices: Readonly<Record<string, BusRouterServiceEntry>>,
+  busServices: Readonly<Record<string, readonly (readonly string[])[]>>,
 ): void => {
   const serviceIds = Object.keys(busServices).sort((a, b) => a.localeCompare(b))
   for (const serviceId of serviceIds) {
     const cleanId = sanitizeTsvToken(serviceId)
-    const entry = busServices[serviceId]
-    if (!entry || cleanId.length === 0) {
+    const routes = busServices[serviceId]
+    if (!routes || cleanId.length === 0) {
       continue
     }
-    for (const route of entry.routes) {
+    for (const route of routes) {
       const cleanedRoute = route.map(sanitizeTsvToken).filter(Boolean)
       if (cleanedRoute.length >= 2) {
         lines.push(`R\t${cleanId}\t${cleanedRoute.join(',')}`)
@@ -253,9 +247,9 @@ export const parseBusNetworkTsv = (rawTsv: string): ParsedBusNetworkData => {
     applyNetworkRow(lines[index] ?? '', routesByService, busFirstLast)
   }
 
-  const busServices: Record<string, BusRouterServiceEntry> = {}
-  for (const [serviceId, routes] of routesByService.entries()) {
-    busServices[serviceId] = { name: serviceId, routes }
+  const busServices: Record<string, string[][]> = {}
+  for (const [serviceId, routes] of routesByService) {
+    busServices[serviceId] = routes
   }
   return { networkDate, busServices, busFirstLast }
 }
@@ -583,20 +577,20 @@ const buildBusPatternsForRoute = (
 
 const buildBusPatterns = (
   stopsById: ReadonlyMap<string, Stop>,
-  busServices: Readonly<Record<string, BusRouterServiceEntry>>,
+  busServices: Readonly<Record<string, readonly (readonly string[])[]>>,
   firstLastLookup: ReadonlyMap<
     string,
     ReadonlyMap<string, readonly ParsedFirstLastEntry[]>
   >,
 ): TransitPattern[] => {
   const patterns: TransitPattern[] = []
-  for (const [serviceId, entry] of Object.entries(busServices)) {
-    for (let dirIdx = 0; dirIdx < entry.routes.length; dirIdx += 1) {
+  for (const [serviceId, routes] of Object.entries(busServices)) {
+    for (let dirIdx = 0; dirIdx < routes.length; dirIdx += 1) {
       patterns.push(
         ...buildBusPatternsForRoute(
           serviceId,
           dirIdx,
-          entry.routes[dirIdx] ?? [],
+          routes[dirIdx] ?? [],
           stopsById,
           firstLastLookup,
         ),
@@ -611,15 +605,17 @@ const parseStationNumber = (stationId: string): number => {
   return digits ? Number(digits) : 0
 }
 
-const collectByPrefix = (railStops: readonly Stop[], prefix: string): Stop[] =>
-  railStops
-    .filter((s) => {
-      if (prefix === 'CG') {
-        return s.id === 'CG' || s.id.startsWith('CG')
-      }
-      return new RegExp(`^${prefix}\\d+$`).test(s.id)
-    })
+const collectByPrefix = (
+  railStops: readonly Stop[],
+  prefix: string,
+): Stop[] => {
+  const stationPattern = new RegExp(`^${prefix}\\d+$`)
+  return railStops
+    .filter((s) =>
+      prefix === 'CG' ? s.id.startsWith('CG') : stationPattern.test(s.id),
+    )
     .sort((a, b) => parseStationNumber(a.id) - parseStationNumber(b.id))
+}
 
 interface RailPatternOptions {
   readonly patternPrefix?: string
@@ -715,51 +711,41 @@ const pushBidirectionalRail = (
 
 const pushStemAndLoopRail = (
   patterns: TransitPattern[],
-  serviceId: string,
   orderedStops: readonly Stop[],
-  hubStationId: string,
-  isLrt: boolean,
 ): void => {
-  const hubIndex = orderedStops.findIndex((s) => s.id === hubStationId)
+  const hubIndex = orderedStops.findIndex((s) => s.id === 'BP6')
   if (hubIndex < 0 || orderedStops.length <= hubIndex + 1) {
-    pushBidirectionalRail(patterns, serviceId, orderedStops, isLrt)
+    pushBidirectionalRail(patterns, 'BP', orderedStops, true)
     return
   }
   const stem = orderedStops.slice(0, hubIndex + 1)
   const loopTail = orderedStops.slice(hubIndex + 1)
   const returnStem = [...stem].reverse()
-  const fwd = makeRailPattern(
-    `rail:${serviceId}:fwd`,
-    serviceId,
-    [...stem, ...loopTail, ...returnStem],
-    isLrt,
-  )
-  if (fwd) {
-    patterns.push(fwd)
-  }
-  const rev = makeRailPattern(
-    `rail:${serviceId}:rev`,
-    serviceId,
-    [...stem, ...[...loopTail].reverse(), ...returnStem],
-    isLrt,
-  )
-  if (rev) {
-    patterns.push(rev)
+  for (const [direction, tail] of [
+    ['fwd', loopTail],
+    ['rev', [...loopTail].reverse()],
+  ] as const) {
+    const pattern = makeRailPattern(
+      `rail:BP:${direction}`,
+      'BP',
+      [...stem, ...tail, ...returnStem],
+      true,
+    )
+    if (pattern) {
+      patterns.push(pattern)
+    }
   }
 }
 
 const pushCircleLinePatterns = (
   patterns: TransitPattern[],
-  serviceId: string,
   orderedStops: readonly Stop[],
-  hubStationId: string,
-  isLrt: boolean,
 ): void => {
   const shuttleStops = orderedStops.filter(
     (s) => parseStationNumber(s.id) <= CC_SHUTTLE_MAX_STATION,
   )
-  pushBidirectionalRail(patterns, serviceId, shuttleStops, isLrt, {
-    patternPrefix: `rail:${serviceId}:shuttle`,
+  pushBidirectionalRail(patterns, 'CC', shuttleStops, false, {
+    patternPrefix: 'rail:CC:shuttle',
   })
 
   const peakStops = orderedStops.filter(
@@ -767,8 +753,8 @@ const pushCircleLinePatterns = (
   )
   if (peakStops.length > shuttleStops.length) {
     const firstPeakIndex = patterns.length
-    pushBidirectionalRail(patterns, serviceId, peakStops, isLrt, {
-      patternPrefix: `rail:${serviceId}:peak`,
+    pushBidirectionalRail(patterns, 'CC', peakStops, false, {
+      patternPrefix: 'rail:CC:peak',
     })
     for (let i = firstPeakIndex; i < patterns.length; i += 1) {
       const pattern = patterns[i]
@@ -781,19 +767,16 @@ const pushCircleLinePatterns = (
     }
   }
 
-  const hubIndex = orderedStops.findIndex((s) => s.id === hubStationId)
+  const hubIndex = orderedStops.findIndex((s) => s.id === 'CC4')
   const hub = hubIndex >= 0 ? orderedStops[hubIndex] : undefined
   if (!hub || orderedStops.length <= hubIndex + 1) {
     return
   }
   const loopTail = orderedStops.slice(hubIndex + 1)
-  pushBidirectionalRail(
-    patterns,
-    `${serviceId}_LOOP`,
-    [hub, ...loopTail, hub],
-    isLrt,
-    { getOperatingWindows: getCircleLoopWindows, isLoop: true },
-  )
+  pushBidirectionalRail(patterns, 'CC_LOOP', [hub, ...loopTail, hub], false, {
+    getOperatingWindows: getCircleLoopWindows,
+    isLoop: true,
+  })
 }
 
 const buildLrtPatterns = (
@@ -801,13 +784,7 @@ const buildLrtPatterns = (
   railStops: readonly Stop[],
   stopsById: ReadonlyMap<string, Stop>,
 ): void => {
-  pushStemAndLoopRail(
-    patterns,
-    'BP',
-    collectByPrefix(railStops, 'BP'),
-    'BP6',
-    true,
-  )
+  pushStemAndLoopRail(patterns, collectByPrefix(railStops, 'BP'))
 
   const loopSpecs: readonly {
     readonly hub: string
@@ -843,13 +820,7 @@ const buildRailTopologyPatterns = (
     )
   }
 
-  pushCircleLinePatterns(
-    patterns,
-    'CC',
-    collectByPrefix(railStops, 'CC'),
-    'CC4',
-    false,
-  )
+  pushCircleLinePatterns(patterns, collectByPrefix(railStops, 'CC'))
 
   buildLrtPatterns(patterns, railStops, stopsById)
   return patterns
@@ -924,19 +895,6 @@ const buildTransferLinks = (
   return links
 }
 
-const collectCoveredStops = (
-  patterns: readonly TransitPattern[],
-): readonly string[] => {
-  const covered = new Set<string>()
-  for (const pattern of patterns) {
-    for (const seg of pattern.segments) {
-      covered.add(seg.fromStopId)
-      covered.add(seg.toStopId)
-    }
-  }
-  return [...covered].sort((a, b) => a.localeCompare(b))
-}
-
 /** Build a reusable dated transit network index from bus and rail datasets. */
 export const buildTransitNetworkIndex = (
   input: BuildTransitNetworkInput,
@@ -977,6 +935,5 @@ export const buildTransitNetworkIndex = (
     provenance,
     patterns,
     transfers,
-    coveredStopIds: collectCoveredStops(patterns),
   }
 }
