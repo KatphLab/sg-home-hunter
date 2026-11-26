@@ -4,6 +4,7 @@ const POSTAL_CODE_PATTERN = /^[0-9]{6}$/
 export const BUS_ID_PATTERN = /^[0-9]{5}$/
 export const RAIL_ID_PATTERN = /^[A-Z]{1,3}(?:[0-9]{1,2}[A-Z]?)?$/
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+const stationCodeCollator = new Intl.Collator('en', { numeric: true })
 
 export const isValidSingaporeCoordinate = (lat: number, lon: number): boolean =>
   Number.isFinite(lat) &&
@@ -98,13 +99,13 @@ export const filterRailStations = (
   query: string,
 ): readonly Stop[] => {
   const normalized = query.trim().toLowerCase()
-  const rails = inventory.stops.filter((stop) => stop.kind === 'rail')
-  if (normalized.length === 0) {
-    return rails
-  }
-  return rails.filter(
-    (stop) =>
-      stop.id.toLowerCase().includes(normalized) ||
-      stop.name.toLowerCase().includes(normalized),
-  )
+  return inventory.stops
+    .filter(
+      (stop) =>
+        stop.kind === 'rail' &&
+        (normalized === '' ||
+          stop.id.toLowerCase().includes(normalized) ||
+          stop.name.toLowerCase().includes(normalized)),
+    )
+    .sort((a, b) => stationCodeCollator.compare(a.id, b.id))
 }

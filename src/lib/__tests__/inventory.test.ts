@@ -34,6 +34,25 @@ describe('inventory', () => {
     expect(filterRailStations(inv, 'ns17').map((s) => s.id)).toEqual(['NS17'])
   })
 
+  it('orders workplace station results by the numeric part of the code', () => {
+    const inv = parseStopInventory(
+      `${SAMPLE_TSV}\nNS1\trail\tJurong East\t1.333\t103.742\nNS11\trail\tSembawang\t1.449\t103.820\nNS2\trail\tBukit Batok\t1.349\t103.750`,
+    )
+    expect(filterRailStations(inv, 'ns').map((s) => s.id)).toEqual([
+      'NS1',
+      'NS2',
+      'NS11',
+      'NS17',
+    ])
+    expect(filterRailStations(inv, '').map((s) => s.id)).toEqual([
+      'CC15',
+      'NS1',
+      'NS2',
+      'NS11',
+      'NS17',
+    ])
+  })
+
   it('rejects duplicate (kind, id) pairs and malformed rows', () => {
     const dup = `${SAMPLE_TSV}\n01012\tbus\tDuplicate\t1.3\t103.8`
     expect(() => parseStopInventory(dup)).toThrow()

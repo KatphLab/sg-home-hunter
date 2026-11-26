@@ -4,6 +4,7 @@
 
 - Keep the selected workplace while filtering stations, block duplicate OneMap sign-ins, and leave the saved stop list visible when a workplace lookup fails.
 - Fetch fresh app files when installing an updated offline cache.
+- Sort workplace MRT/LRT options by station code in numeric order (for example, NS1, NS2, NS11).
 
 ## 2026-11-26
 
