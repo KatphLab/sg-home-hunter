@@ -221,6 +221,12 @@
             <select id="area-stop-select" size="4" aria-describedby="area-summary"></select>
           </label>
           <p id="area-summary" class="constraints-summary" role="status" aria-live="polite"></p>
+          <div class="action-row">
+            <button id="check-area-btn" type="button" class="btn btn--primary" disabled>Check within 500 m</button>
+            <button id="stop-area-btn" type="button" class="btn btn--danger" hidden>Stop</button>
+          </div>
+          <p id="area-result" role="status" aria-live="polite" hidden></p>
+          <p id="area-journey" class="constraints-summary tabular" hidden></p>
         </section>
 
         <section class="panel-section stops-section" id="section-stops" aria-labelledby="heading-stops">

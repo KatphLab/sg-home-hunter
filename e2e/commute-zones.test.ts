@@ -8,6 +8,8 @@ const TEST_INVENTORY_TSV = [
   '11112\tbus\tRiver Gardens\t1.300500\t103.850000',
   '11113\tbus\tOver Cap Homes\t1.310000\t103.850000',
   '11114\tbus\tUncovered Homes\t1.320000\t103.850000',
+  '11115\tbus\tRiver Transfer\t1.300800\t103.850000',
+  '11116\tbus\tRiver Edge\t1.305100\t103.850000',
   '44009\tbus\tBukit Panjang Ring\t1.382000\t103.760000',
   '44011\tbus\tBlk 418 Fajar\t1.388000\t103.765000',
   '65009\tbus\tPunggol Temp Int\t1.403600\t103.902200',
@@ -75,6 +77,62 @@ const signInViaUi = async (page: Page): Promise<void> => {
   await expect(page.locator('#signed-in-email')).toHaveText(
     'commuter@example.com',
   )
+}
+
+const selectArea = async (page: Page, stopId: string): Promise<void> => {
+  await page.fill('#area-stop-filter', stopId)
+  await page.selectOption('#area-stop-select', stopId)
+}
+
+const previewRiver = async (page: Page): Promise<string> => {
+  await page.goto('/')
+  await signInViaUi(page)
+  await page.fill('#postal-input', '018989')
+  await page.fill('#office-start-input', '09:00')
+  await page.click('#start-search-btn')
+  await expect(page.locator('#result-status-tag')).toHaveText('Estimated preview')
+  await expect(page.locator('#check-area-btn')).toBeDisabled()
+  await expect(page.locator('#area-result')).toBeHidden()
+  await expect(page.locator('#area-journey')).toBeHidden()
+  await selectArea(page, '11111')
+  await expect(page.locator('#area-summary')).toContainText('2 estimated candidates')
+  await expect(page.locator('#check-area-btn')).toBeEnabled()
+  return (await page.locator('#planned-search-date').innerText()).trim()
+}
+
+const actualJourney = (
+  searchDate: string,
+  inArea: boolean,
+  arrival = '08:45',
+) => {
+  const at = (clock: string) => Date.parse(`${searchDate}T${clock}:00+08:00`)
+  const bus = (stopCode: string, service: string, start: string, end: string) => ({
+    mode: 'BUS', from: { stopCode }, routeShortName: service,
+    startTime: at(start), endTime: at(end),
+  })
+  const legs = inArea
+    ? [
+      bus('88888', '11', '08:10', '08:20'),
+      bus('11115', '22', '08:25', '08:35'),
+      bus('03218', '33', '08:40', '08:44'),
+    ]
+    : [bus('88888', '11', '08:25', '08:44')]
+  return {
+    startTime: legs[0]?.startTime,
+    endTime: at(arrival),
+    legs: [...legs, { mode: 'WALK', startTime: at('08:44'), endTime: at(arrival) }],
+  }
+}
+
+interface RequestedProbe {
+  start: string | null
+  time: string | null
+  date: string | null
+}
+
+const requestedProbe = (route: Route): RequestedProbe => {
+  const params = new URL(route.request().url()).searchParams
+  return { start: params.get('start'), time: params.get('time'), date: params.get('date') }
 }
 
 test.describe('House Hunter PWA acceptance', () => {
@@ -231,6 +289,198 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#area-summary')).toBeVisible()
   })
 
+  test('spends three logical probes in ride-sorted round-robin order, retaining tried departures', async ({
+    page, context,
+  }) => {
+    const probes: RequestedProbe[] = []
+    await context.route('**/api/public/routingsvc/route*', (route) => {
+      probes.push(requestedProbe(route))
+      return fulfillJson(route, 200, { plan: { itineraries: [] } })
+    })
+    const searchDate = await previewRiver(page)
+    await page.click('#check-area-btn')
+    const outcome = page.locator('#area-result')
+    await expect(outcome).toHaveAttribute('role', 'status')
+    await expect(outcome).toContainText('Not confirmed')
+    await expect(outcome).toContainText('3 checks')
+    await expect(outcome).not.toContainText('unreachable')
+    await expect(page.locator('#check-area-btn')).toBeDisabled()
+    await expect(page.locator('#stop-area-btn')).toBeHidden()
+    expect(probes.map((probe) => probe.start)).toEqual([
+      '1.3,103.85', '1.3005,103.85', '1.3,103.85',
+    ])
+    expect(probes[0]?.time).not.toBe(probes[2]?.time)
+    const [year, month, day] = searchDate.split('-')
+    expect(probes.every((probe) => probe.date === `${month}-${day}-${year}`)).toBe(true)
+    await selectArea(page, '11112')
+    await expect(outcome).toBeHidden()
+    await page.click('#check-area-btn')
+    await expect(outcome).toContainText('Not confirmed')
+    await expect(outcome).toContainText('3 checks')
+    expect(probes).toHaveLength(6)
+    expect(new Set(probes.map((probe) => `${probe.start}@${probe.time}`)).size).toBe(6)
+  })
+
+  for (const arrival of ['08:45', '09:00']) {
+    test(`retains outside proof then stops on an unestimated transfer, including final walk to ${arrival}`, async ({
+      page, context,
+    }) => {
+      await page.setViewportSize({ width: 390, height: 844 })
+      let searchDate = ''
+      const probes: RequestedProbe[] = []
+      await context.route('**/api/public/routingsvc/route*', (route) => {
+        probes.push(requestedProbe(route))
+        return fulfillJson(route, 200, {
+          plan: { itineraries: [actualJourney(searchDate, probes.length > 1, arrival)] },
+        })
+      })
+      searchDate = await previewRiver(page)
+      await page.click('[data-mobile-tab="stops"]')
+      await page.click('#check-area-btn')
+      await expect(page.locator('#area-result')).toContainText('Confirmed')
+      await expect(page.locator('#area-result')).toContainText('2 checks')
+      expect(probes.map((probe) => probe.start)).toEqual(['1.3,103.85', '1.3005,103.85'])
+      const journey = page.locator('#section-preview #area-journey')
+      await expect(journey).toBeVisible()
+      for (const detail of ['11115', 'River Transfer', searchDate, '08:25', '14 min', arrival, 'Bus 22 → Bus 33']) {
+        await expect(journey).toContainText(detail)
+      }
+      await expect(journey).not.toContainText('Bus 11')
+      await expect(page.locator('#map')).toBeHidden()
+      await expect(page.locator('#check-area-btn')).toBeDisabled()
+      await expect(page.locator('#stop-area-btn')).toBeHidden()
+      await expect(page.locator('.stop-row-btn[data-stop-id="88888"]')).toHaveCount(1)
+      await expect(page.locator('.stop-row-btn[data-stop-id="11115"]')).toHaveCount(1)
+      // An overlapping circle has no estimates but contains the proven transfer.
+      await selectArea(page, '11116')
+      await expect(page.locator('#area-summary')).toContainText('0 estimated candidates')
+      await expect(page.locator('#area-result')).toBeHidden()
+      await page.click('#check-area-btn')
+      await expect(page.locator('#area-result')).toContainText('Confirmed')
+      await expect(page.locator('#area-result')).toContainText('0 checks')
+      await expect(journey).toContainText('11115')
+      expect(probes).toHaveLength(2)
+      // The outside boarding retained from the first response answers an empty preview circle.
+      await selectArea(page, '88888')
+      await expect(page.locator('#area-summary')).toContainText('0 estimated candidates')
+      await expect(page.locator('#area-result')).toBeHidden()
+      await expect(journey).toBeHidden()
+      await page.click('#check-area-btn')
+      await expect(page.locator('#area-result')).toContainText('Confirmed')
+      await expect(page.locator('#area-result')).toContainText('0 checks')
+      await expect(journey).toContainText('88888')
+      expect(probes).toHaveLength(2)
+    })
+  }
+
+  test('an empty circle makes no requests and is not called unreachable', async ({ page, context }) => {
+    let calls = 0
+    await context.route('**/api/public/routingsvc/route*', (route) => {
+      calls += 1
+      return fulfillJson(route, 200, { plan: { itineraries: [] } })
+    })
+    await previewRiver(page)
+    await selectArea(page, '88888')
+    await page.click('#check-area-btn')
+    await expect(page.locator('#area-result')).toContainText('No estimated candidates')
+    await expect(page.locator('#area-result')).toContainText('0 checks')
+    await expect(page.locator('#area-result')).not.toContainText('unreachable')
+    expect(calls).toBe(0)
+  })
+
+  for (const arrival of ['08:44', '09:01']) {
+    test(`does not confirm a journey arriving outside the window at ${arrival}`, async ({ page, context }) => {
+      let searchDate = ''
+      let calls = 0
+      await context.route('**/api/public/routingsvc/route*', (route) => {
+        calls += 1
+        return fulfillJson(route, 200, {
+          plan: { itineraries: [actualJourney(searchDate, true, arrival)] },
+        })
+      })
+      searchDate = await previewRiver(page)
+      await page.click('#check-area-btn')
+      await expect(page.locator('#area-result')).toContainText('Not confirmed')
+      await expect(page.locator('#area-result')).toContainText('3 checks')
+      await expect(page.locator('#area-journey')).toBeHidden()
+      await expect(page.locator('.stop-row-btn')).toHaveCount(0)
+      expect(calls).toBe(3)
+    })
+  }
+
+  for (const failure of ['auth', 'network'] as const) {
+    test(`reports ${failure} separately from negative journey evidence`, async ({ page, context }) => {
+      const probes: RequestedProbe[] = []
+      await context.route('**/api/public/routingsvc/route*', (route) => {
+        probes.push(requestedProbe(route))
+        return failure === 'auth'
+          ? fulfillJson(route, 401, { error: 'expired' })
+          : route.abort('failed')
+      })
+      await previewRiver(page)
+      await page.click('#check-area-btn')
+      const outcome = page.locator('#area-result')
+      await expect(outcome).toContainText(failure === 'auth' ? 'Sign-in expired' : 'Routing failed', { timeout: 20_000 })
+      await expect(outcome).toContainText('1 check')
+      await expect(outcome).not.toContainText('Not confirmed')
+      await expect(page.locator('#area-journey')).toBeHidden()
+      await expect(page.locator('#stop-area-btn')).toBeHidden()
+      await expect(page.locator('#check-area-btn')).toBeDisabled()
+      expect(probes).toHaveLength(failure === 'auth' ? 1 : 4)
+      expect(new Set(probes.map((probe) => `${probe.start}@${probe.time}`)).size).toBe(1)
+    })
+  }
+
+  for (const change of ['stop', 'selection', 'workplace', 'office start', 'ride cap', 'sign out'] as const) {
+    test(`discards an in-flight response after ${change}`, async ({ page, context }) => {
+      const responseGate = Promise.withResolvers<void>()
+      const responseSent = Promise.withResolvers<void>()
+      let calls = 0
+      let searchDate = ''
+      await context.route('**/api/public/routingsvc/route*', async (route) => {
+        calls += 1
+        await responseGate.promise
+        try {
+          await fulfillJson(route, 200, { plan: { itineraries: [actualJourney(searchDate, true)] } })
+        } finally {
+          responseSent.resolve()
+        }
+      })
+      searchDate = await previewRiver(page)
+      await page.click('#check-area-btn')
+      await expect.poll(() => calls).toBe(1)
+      await expect(page.locator('#check-area-btn')).toBeDisabled()
+      await expect(page.locator('#stop-area-btn')).toBeVisible()
+      try {
+        if (change === 'stop') await page.click('#stop-area-btn')
+        if (change === 'selection') await selectArea(page, '88888')
+        if (change === 'workplace') await page.fill('#postal-input', '018988')
+        if (change === 'office start') await page.fill('#office-start-input', '08:30')
+        if (change === 'ride cap') await page.fill('#ride-cap-input', '15')
+        if (change === 'sign out') await page.click('#signout-btn')
+        await expect(page.locator('#stop-area-btn')).toBeHidden()
+      } finally {
+        responseGate.resolve()
+      }
+      await responseSent.promise
+      await expect(page.locator('#area-journey')).toBeHidden()
+      await expect(page.locator('#area-result')).not.toContainText('Confirmed')
+      expect(calls).toBe(1)
+      if (change === 'stop') {
+        await expect(page.locator('#area-result')).toContainText('Stopped')
+        await expect(page.locator('#area-result')).toContainText('1 check')
+      } else if (change === 'selection') {
+        await expect(page.locator('#area-result')).toBeHidden()
+        await expect(page.locator('#check-area-btn')).toBeEnabled()
+      } else if (change === 'sign out') {
+        await expect(page.locator('#check-area-btn')).toBeDisabled()
+      } else {
+        await expect(page.locator('#section-preview')).toBeHidden()
+      }
+      await expect(page.locator('.stop-row-btn[data-stop-id="11115"]')).toHaveCount(0)
+    })
+  }
+
   test('preserves only the exact destination station zero-ride exception', async ({ page, context }) => {
     let routingCalls = 0
     await context.route('**/api/public/routingsvc/route*', (route) => {
@@ -250,6 +500,14 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#selected-arrival-time')).toHaveText('09:00')
     await expect(page.locator('.leaflet-commuteZone-pane')).toHaveCSS('opacity', '0.34')
     await expect(page.locator('.leaflet-commuteZone-pane path')).toHaveCount(1)
+    expect(routingCalls).toBe(0)
+    await selectArea(page, 'CC15')
+    await page.click('#check-area-btn')
+    await expect(page.locator('#area-result')).toContainText('Confirmed')
+    await expect(page.locator('#area-result')).toContainText('0 checks')
+    await expect(page.locator('#area-journey')).toContainText('NS17')
+    await expect(page.locator('#area-journey')).toContainText('0 min')
+    await expect(page.locator('#area-journey')).toContainText('09:00')
     expect(routingCalls).toBe(0)
     await page.fill('#ride-cap-input', '15')
     await expect(page.locator('#section-preview')).toBeHidden()
@@ -320,6 +578,13 @@ test.describe('House Hunter PWA acceptance', () => {
     await page.click('#start-search-btn')
     await expect(page.locator('#result-status-tag')).toHaveText('Estimated preview')
     await expect(page.locator('.stop-row-btn')).toHaveCount(0)
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('house-hunter:last-completed-result:v1') ?? 'null'))).toEqual(saved)
+    await context.route('**/api/public/routingsvc/route*', (route) =>
+      fulfillJson(route, 200, { plan: { itineraries: [] } }),
+    )
+    await selectArea(page, '11111')
+    await page.click('#check-area-btn')
+    await expect(page.locator('#area-result')).toContainText('Not confirmed')
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('house-hunter:last-completed-result:v1') ?? 'null'))).toEqual(saved)
     const lookupGate = Promise.withResolvers<void>()
     let pending = false

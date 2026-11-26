@@ -37,6 +37,11 @@ import {
   type NeighbourhoodPreview,
 } from './neighbourhood-preview.js'
 
+export interface AreaCheckState {
+  readonly checkedDepartures: Set<string>
+  checksPerformed: number
+  hasRun: boolean
+}
 export interface AppState {
   inventory: StopInventory | null
   networkText: string | null
@@ -50,6 +55,7 @@ export interface AppState {
   abortController: AbortController | null
   preview: NeighbourhoodPreview | null
   selectedArea: Coordinates | null
+  areaCheck: AreaCheckState | null
 }
 
 export interface AppContext {
@@ -68,6 +74,7 @@ export const syncConnectivity = (ctx: AppContext): void => {
     state.networkText !== null &&
     !state.isSearching
   renderConnectivityState(els, online, canStart)
+  els.checkAreaButton.disabled = !canStart || !state.selectedArea || state.areaCheck?.hasRun !== false
 }
 
 export const syncAccountUi = (ctx: AppContext): void => {
@@ -186,8 +193,38 @@ export const handleSignOut = (ctx: AppContext): void => {
   syncAccountUi(ctx)
 }
 
+const stopAreaCheck = (ctx: AppContext): void => {
+  if (!ctx.state.preview || !ctx.state.isSearching) return
+  ctx.state.abortController?.abort()
+  ctx.state.abortController = null
+  ctx.state.isSearching = false
+  ctx.els.stopAreaButton.hidden = true
+  ctx.els.areaResult.hidden = false
+  ctx.els.areaResult.textContent = `Stopped. This area is not confirmed by these checks. ${String(ctx.state.areaCheck?.checksPerformed ?? 0)} checks performed.`
+  ctx.els.liveStatusRegion.textContent = ctx.els.areaResult.textContent
+  syncConnectivity(ctx)
+}
+
+const resetAreaSelection = (ctx: AppContext): void => {
+  stopAreaCheck(ctx)
+  if (ctx.state.areaCheck) {
+    ctx.state.areaCheck.checksPerformed = 0
+    ctx.state.areaCheck.hasRun = false
+  }
+  ctx.els.areaResult.hidden = true
+  ctx.els.areaResult.textContent = ''
+  ctx.els.areaJourney.hidden = true
+  ctx.els.resultStatusTag.textContent = 'Estimated preview'
+  ctx.els.checkAreaButton.disabled = !navigator.onLine || !ctx.state.account
+  selectStop(ctx, null)
+}
+
 export const stopActiveSearch = (ctx: AppContext): void => {
-  invalidatePreview(ctx)
+  if (ctx.state.preview && ctx.state.isSearching) {
+    stopAreaCheck(ctx)
+  } else {
+    invalidatePreview(ctx)
+  }
 }
 
 export const refreshAreaStopPicker = (ctx: AppContext): void => {
@@ -210,6 +247,7 @@ export const selectArea = (
   if (!state.preview) {
     return
   }
+  resetAreaSelection(ctx)
   state.selectedArea = centre
   const count = candidatesWithinArea(state.preview, centre).length
   mapView.setAreaSelection(centre, focus)
@@ -225,6 +263,11 @@ export const invalidatePreview = (ctx: AppContext): void => {
   state.preview = null
   state.selectedArea = null
   els.previewPanel.hidden = true
+  state.areaCheck = null
+  els.stopAreaButton.hidden = true
+  els.checkAreaButton.disabled = true
+  els.areaResult.textContent = ''
+  els.areaJourney.hidden = true
   els.stopSearchButton.hidden = true
   mapView.clearPreview()
   if (wasActive) {
@@ -247,6 +290,7 @@ const displayPreview = (
 ): void => {
   const { els, mapView, state } = ctx
   state.preview = preview
+  state.areaCheck = { checkedDepartures: new Set(), checksPerformed: 0, hasRun: false }
   state.workplace = preview.workplace
   state.matches = []
   mapView.clearStops()

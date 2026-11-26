@@ -84,6 +84,10 @@ export interface AppElements {
   readonly areaStopFilter: HTMLInputElement
   readonly areaStopSelect: HTMLSelectElement
   readonly areaSummary: HTMLElement
+  readonly checkAreaButton: HTMLButtonElement
+  readonly stopAreaButton: HTMLButtonElement
+  readonly areaResult: HTMLElement
+  readonly areaJourney: HTMLElement
 }
 
 export const collectAppElements = (): AppElements => ({
@@ -152,6 +156,10 @@ export const collectAppElements = (): AppElements => ({
   areaStopFilter: requireElementOfType('area-stop-filter', HTMLInputElement),
   areaStopSelect: requireElementOfType('area-stop-select', HTMLSelectElement),
   areaSummary: requireElement('area-summary'),
+  checkAreaButton: requireElementOfType('check-area-btn', HTMLButtonElement),
+  stopAreaButton: requireElementOfType('stop-area-btn', HTMLButtonElement),
+  areaResult: requireElement('area-result'),
+  areaJourney: requireElement('area-journey'),
 })
 
 export const renderStationOptions = (

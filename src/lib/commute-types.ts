@@ -81,22 +81,3 @@ export interface OneMapAccount {
   readonly expiryTimestamp: number
 }
 
-export interface SearchProgress {
-  readonly status: SearchResultStatus
-  readonly triedCount: number
-  readonly totalCount: number
-  readonly matchedCount: number
-  readonly passNumber: number
-  readonly totalPasses: number
-  readonly failedQueries: number
-  readonly matches: readonly QualifiedStop[]
-}
-
-export interface SearchRunResult {
-  readonly status: 'completed' | 'partial'
-  readonly authExpired: boolean
-  readonly triedCount: number
-  readonly totalCount: number
-  readonly failedQueries: number
-  readonly matches: readonly QualifiedStop[]
-}

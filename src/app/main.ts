@@ -2,6 +2,7 @@ import { filterRailStations, parseStopInventory } from '@lib/inventory.js'
 import { loadCompletedResult } from '@lib/saved-result-store.js'
 import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
 import { normalizeError } from '@utils/guards.js'
+import { checkSelectedArea } from './area-check.js'
 import {
   collectAppElements,
   getSelectedWorkplaceKind,
@@ -100,6 +101,8 @@ const wireUiEvents = (ctx: AppContext): void => {
     void handleSearchSubmit(ctx)
   })
   els.stopSearchButton.addEventListener('click', () => stopActiveSearch(ctx))
+  els.checkAreaButton.addEventListener('click', () => void checkSelectedArea(ctx))
+  els.stopAreaButton.addEventListener('click', () => stopActiveSearch(ctx))
   window.addEventListener('online', () => syncConnectivity(ctx))
   window.addEventListener('offline', () => syncConnectivity(ctx))
 }
@@ -127,6 +130,7 @@ const bootstrap = async (): Promise<void> => {
     abortController: null,
     preview: null,
     selectedArea: null,
+    areaCheck: null,
   }
 
   let ctx: AppContext | null = null
