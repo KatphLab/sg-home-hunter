@@ -65,6 +65,7 @@ interface BackwardLabel {
   readonly minRideMs: number
   readonly estRideMs: number
   readonly earliestClockMs: number
+  readonly estimatedEarliestClockMs: number
   readonly latestClockMs: number
   readonly estClockMs: number
   readonly transfers: number
@@ -100,7 +101,9 @@ const dominatesLabel = (
   existing.minRideMs <= candidate.minRideMs &&
   existing.estRideMs <= candidate.estRideMs &&
   existing.latestClockMs >= candidate.latestClockMs &&
-  (ignoreEarliest || existing.earliestClockMs <= candidate.earliestClockMs)
+  (ignoreEarliest ||
+    (existing.earliestClockMs <= candidate.earliestClockMs &&
+      existing.estimatedEarliestClockMs <= candidate.estimatedEarliestClockMs))
 
 const findDominanceInsertPoint = (
   list: readonly BackwardLabel[],
@@ -302,6 +305,7 @@ const createSeedLabel = (
     minRideMs: 0,
     estRideMs: 0,
     earliestClockMs,
+    estimatedEarliestClockMs: earliestClockMs,
     latestClockMs,
     estClockMs: clamp(
       targetArrivalMs - estWalkMs,
@@ -418,7 +422,7 @@ const stepLabelAcrossSegment = (
   if (nextMinRide > ctx.rideCapMs) {
     return
   }
-  const maxStepMs = Math.max(seg.estRideMs, seg.minRideMs)
+  const maxStepMs = ctx.rideCapMs - label.minRideMs
   const singleInterval = intervals.length === 1
   for (const { startMs, endMs } of intervals) {
     const nextLatest = Math.min(label.latestClockMs - seg.minRideMs, endMs)
@@ -435,6 +439,16 @@ const stepLabelAcrossSegment = (
       minRideMs: nextMinRide,
       estRideMs: label.estRideMs + seg.estRideMs,
       earliestClockMs: nextEarliest,
+      // Keep estimate-derived window diversity without using it for feasibility.
+      estimatedEarliestClockMs: Math.min(
+        nextLatest,
+        Math.max(
+          label.estimatedEarliestClockMs -
+            Math.max(seg.estRideMs, seg.minRideMs),
+          startMs,
+          ctx.minDepartureMs,
+        ),
+      ),
       latestClockMs: nextLatest,
       estClockMs: clamp(
         label.estClockMs - seg.estRideMs,
@@ -622,6 +636,7 @@ const shiftLabelByTransfer = (
     minRideMs: label.minRideMs,
     estRideMs: label.estRideMs,
     earliestClockMs: nextEarliest,
+    estimatedEarliestClockMs: nextEarliest,
     latestClockMs: nextLatest,
     estClockMs: clamp(
       label.estClockMs - walkMs - estWaitMs,

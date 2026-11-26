@@ -353,7 +353,7 @@ export const runBackwardCommuteSearch = async (
       break
     }
   }
-  if (tracker.errorsCount > 0) {
+  if (options.signal.aborted || tracker.errorsCount > 0) {
     status = 'partial'
   }
 

@@ -290,6 +290,75 @@ describe('transit-network', () => {
     expect(seg?.estRideMs).toBeGreaterThanOrEqual(180_000)
   })
 
+  it('retains the published 00:30 NE17 departure towards NE18', () => {
+    const index = buildTransitNetworkIndex({
+      inventory: MINI_INVENTORY,
+      networkDate: '2026-11-26',
+      busServices: {},
+      busFirstLast: {},
+    })
+    const segment = index.patterns
+      .flatMap((pattern) => pattern.segments)
+      .find((s) => s.fromStopId === 'NE17' && s.toStopId === 'NE18')
+    for (const day of ['weekday', 'saturday', 'sunday_holiday'] as const) {
+      const window = segment?.operatingWindows?.[day]
+      expect(window).toBeDefined()
+      expect(window && 'lastMin' in window).toBe(true)
+      if (window && 'lastMin' in window) {
+        expect(window.firstMin).toBeLessThanOrEqual(1470)
+        expect(window.lastMin).toBeGreaterThanOrEqual(1470)
+      }
+    }
+  })
+
+  it('retains the published one-minute NE7 to NE8 ride without treating the estimate as a lower bound', () => {
+    const index = buildTransitNetworkIndex({
+      inventory: inventory(
+        stop('NE7', 'rail', 1.306_571, 103.849_299),
+        stop('NE8', 'rail', 1.312_708, 103.854_377),
+      ),
+      networkDate: '2026-11-26',
+      busServices: {},
+      busFirstLast: {},
+    })
+    const segment = index.patterns
+      .flatMap((pattern) => pattern.segments)
+      .find((s) => s.fromStopId === 'NE7' && s.toStopId === 'NE8')
+    expect(segment).toBeDefined()
+    expect(segment?.minRideMs).toBeLessThanOrEqual(60_000)
+    expect(segment?.estRideMs).toBeGreaterThan(60_000)
+  })
+
+  it('uses the separate published last departures for both service 98 visits to 21069', () => {
+    const bundled = parseBusNetworkTsv(
+      readFileSync('public/data/bus-network.tsv', 'utf8'),
+    )
+    const index = buildTransitNetworkIndex({
+      inventory: parseStopInventory(
+        readFileSync('public/data/stops.tsv', 'utf8'),
+      ),
+      networkDate: bundled.networkDate,
+      busServices: { '98': bundled.busServices['98'] ?? [] },
+      busFirstLast: bundled.busFirstLast,
+    })
+    const visits = index.patterns
+      .filter((pattern) => pattern.serviceId === '98')
+      .flatMap((pattern) => pattern.segments)
+      .filter((segment) => segment.fromStopId === '21069')
+    expect(visits.map((segment) => segment.operatingWindows)).toEqual([
+      {
+        weekday: { firstMin: 364, lastMin: 1479 },
+        saturday: { firstMin: 376, lastMin: 1481 },
+        sunday_holiday: { firstMin: 374, lastMin: 1481 },
+      },
+      {
+        weekday: { firstMin: 365, lastMin: 1491 },
+        saturday: { firstMin: 365, lastMin: 1494 },
+        sunday_holiday: { firstMin: 365, lastMin: 1493 },
+      },
+    ])
+  })
+
   it('splits bus patterns at missing inventory stops instead of bridging across gaps', () => {
     const gapInventory = inventory(
       ...MINI_INVENTORY.stops.slice(0, 3),

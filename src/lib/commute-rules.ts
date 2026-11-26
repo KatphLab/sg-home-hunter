@@ -90,6 +90,7 @@ interface ParsedLeg {
   readonly startTime: number
   readonly endTime: number
   readonly mode: string
+  readonly rideMs: number
   readonly service: JourneyService | null
   readonly stopId: string | null
 }
@@ -136,7 +137,6 @@ const inspectLegs = (
   let prevEnd = itinStart
   return rawLegs.map((rawLeg) => {
     const leg = parseLegTiming(rawLeg, prevEnd, itinEnd)
-    prevEnd = leg.endTime
     const service = isTransitMode(leg.mode)
       ? extractService(leg.record, leg.mode)
       : null
@@ -146,7 +146,10 @@ const inspectLegs = (
     )
     const stopId =
       service && !interlined ? extractBoardingStopId(leg.record) : null
-    return { ...leg, service, stopId }
+    // An interlined passenger remains on board between the two service legs.
+    const rideMs = leg.endTime - (interlined ? prevEnd : leg.startTime)
+    prevEnd = leg.endTime
+    return { ...leg, service, stopId, rideMs }
   })
 }
 
@@ -283,7 +286,7 @@ const collectBoardings = (
       leg.endTime - (rideCapMs - rideMs),
     )
     collectHints(result.hints, leg, earliestDeparture, constraints.searchDate)
-    rideMs += leg.endTime - leg.startTime
+    rideMs += leg.rideMs
     services.unshift(leg.service)
     if (rideMs > rideCapMs) {
       break

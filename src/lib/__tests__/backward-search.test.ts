@@ -178,20 +178,27 @@ describe('backward-search verification', () => {
     })
   })
 
-  it('stops before the next probe on cancellation', async () => {
-    const controller = new AbortController()
-    const calls: string[] = []
-    const result = await verify({
-      signal: controller.signal,
-      routeStop: (stop) => {
-        calls.push(stop.id)
-        controller.abort()
-        return Promise.resolve([])
-      },
-    })
-    expect(calls).toEqual([origin.id])
-    expect(result.status).toBe('partial')
-  })
+  it.each([1, 2])(
+    'honors cancellation with %i pending probe(s)',
+    async (count) => {
+      const controller = new AbortController()
+      const calls: string[] = []
+      const result = await verify({
+        plan: {
+          leads: [lead(origin), lead(transfer)].slice(0, count),
+          uncoveredStopIds: [],
+        },
+        signal: controller.signal,
+        routeStop: (stop) => {
+          calls.push(stop.id)
+          controller.abort()
+          return Promise.resolve([])
+        },
+      })
+      expect(calls).toEqual([origin.id])
+      expect(result.status).toBe('partial')
+    },
+  )
 
   it.each([true, false])(
     'distinguishes a failed query from an empty plan (failed=%s)',

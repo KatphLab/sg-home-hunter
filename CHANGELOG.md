@@ -2,6 +2,9 @@
 
 ## 2026-11-26
 
+- Keep late bus departures, after-midnight trains, and short MRT rides eligible for verification. On looping bus routes, use the timetable for the correct visit to each stop.
+- Count time spent aboard a stopped vehicle toward the ride cap when the passenger stays on for the next service.
+- Preserve the previous offline result when Stop is pressed during the final routing request.
 - Disable Start while resolving the workplace so a second submission cannot mix results from two searches.
 - Keep Stop available while a browser worker plans departures. Stopping during planning leaves the last completed offline search intact.
 - Preserve feasible feeder rides after equal-cost replacements, retain better over-cap estimates and probe materially different departure times even when their feasible windows overlap.

@@ -204,12 +204,12 @@ describe('boarding qualification rules', () => {
     ).toEqual({ journeys: [], hints: [] })
   })
 
-  it('does not prove reboarding on interlined legs without stop IDs and retains their ride and services', () => {
-    const result = evaluateBoardings(CONSTRAINTS, {
-      startTime: sgtMs('08:25'),
+  it('counts interlined dwell as time aboard without proving a new boarding', () => {
+    const itinerary = {
+      startTime: sgtMs('08:20'),
       endTime: sgtMs('08:50'),
       legs: [
-        busLeg(sgtMs('08:25'), sgtMs('08:35')),
+        busLeg(sgtMs('08:20'), sgtMs('08:30')),
         {
           mode: 'BUS',
           startTime: sgtMs('08:35'),
@@ -223,9 +223,14 @@ describe('boarding qualification rules', () => {
           interlineWithPreviousLeg: true,
         },
       ],
-    })
+    }
+    const result = evaluateBoardings(CONSTRAINTS, itinerary)
     expect(result.journeys.map((journey) => journey.stopId)).toEqual(['66421'])
-    expect(result.journeys[0]?.rideMs).toBe(25 * 60_000)
+    expect(result.journeys[0]?.rideMs).toBe(30 * 60_000)
+    expect(
+      evaluateBoardings({ ...CONSTRAINTS, rideCapMinutes: 29 }, itinerary)
+        .journeys,
+    ).toEqual([])
     expect(result.journeys[0]?.services.map((service) => service.name)).toEqual(
       ['116', '88', '88B'],
     )

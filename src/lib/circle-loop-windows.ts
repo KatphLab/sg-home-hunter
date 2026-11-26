@@ -1,11 +1,11 @@
 import type { DayType, OperatingWindow } from '@lib/transit-segment.js'
 
-// Existing modeled rail envelope, shared with the rail builder. Only the loop
-// first-service times below are published station/day/direction-specific values;
-// retain the existing closing bound rather than truncate genuine short turns.
+// Conservative envelope, not an exact timetable. SBS publishes first trains
+// before 05:30 and last trains after midnight (including 00:30 at NE17).
+// https://www.sbstransit.com.sg/first-train-last-train
 export const RAIL_DEFAULT_WINDOW: OperatingWindow = {
-  firstMin: 330,
-  lastMin: 1435,
+  firstMin: 5 * 60,
+  lastMin: 25 * 60,
 }
 
 // Land Transport Guru station First / Last Train Timings, retrieved 2026-11-26.

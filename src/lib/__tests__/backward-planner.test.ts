@@ -1035,6 +1035,50 @@ describe('backward-planner', () => {
     ).toBe(true)
   })
 
+  it('keeps the late 665 departure when its ride exceeds the estimate but fits the cap', () => {
+    const inventory = parseStopInventory(
+      readFileSync('public/data/stops.tsv', 'utf8'),
+    )
+    const bus = parseBusNetworkTsv(
+      readFileSync('public/data/bus-network.tsv', 'utf8'),
+    )
+    const network = buildTransitNetworkIndex({ inventory, ...bus })
+    const destination = inventory.stops.find((stop) => stop.id === '08057')
+    if (!destination) throw new Error('Missing stop 08057')
+    const plan = planBackwardLeads({
+      inventory,
+      networkIndex: {
+        ...network,
+        patterns: network.patterns.filter(
+          (pattern) => pattern.serviceId === '665',
+        ),
+        transfers: [],
+      },
+      workplace: {
+        kind: 'postal',
+        postalCode: '238843',
+        label: destination.name,
+        point: destination.point,
+      },
+      constraints: {
+        searchDate: SEARCH_DATE,
+        officeStart: '09:05',
+        rideCapMinutes: 60,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+
+    // The last bus leaves 46991 at 08:01 and arrives at 08057 at 08:53.
+    const lead = plan.leads.find((item) => item.stop.id === '46991')
+    expect(lead).toBeDefined()
+    expect(
+      lead?.candidateDepartures.some(
+        (clock) => clock >= '07:55:00' && clock <= '08:01:59',
+      ),
+    ).toBe(true)
+  })
+
   it('discovers bundled 200A stop 16021 on Monday 00:20 across two 00:14 stops without widening service days', () => {
     const inventory = parseStopInventory(
       readFileSync('public/data/stops.tsv', 'utf8'),
@@ -1399,7 +1443,6 @@ describe('backward-planner', () => {
     ] as const) {
       const loop = journey(from, to, '09:00', 15)
       expect(loop?.transfers).toBe(0)
-      expect(loop?.minRideMs).toBeGreaterThan(120_000)
     }
     expect(journey('CC34', 'CC5', '05:50', 15)).toBeUndefined()
     expect(journey('CC3', 'CC5', '09:00', 10)?.transfers).toBe(0)

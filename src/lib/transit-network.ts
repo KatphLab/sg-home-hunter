@@ -27,6 +27,7 @@ const MRT_HEADWAY_MS = 240_000
 const LRT_HEADWAY_MS = 300_000
 const BUS_HEADWAY_MS = 720_000
 const BUS_MAX_SPEED_MPS = 18
+const MRT_MAX_SPEED_MPS = 25
 const SERVICE_DAY_CUTOFF_MIN = 240
 const LINEAR_MRT_PREFIXES: readonly string[] = [
   'NS',
@@ -513,9 +514,15 @@ const alignRouteFirstLast = (
   >,
 ): readonly (ParsedFirstLastEntry | undefined)[] => {
   const aligned: (ParsedFirstLastEntry | undefined)[] = []
+  const usedEntries = new Set<ParsedFirstLastEntry>()
   let prevFirstMin: number | null = null
   for (let i = 0; i < route.length; i += 1) {
-    const candidates = firstLastLookup.get(route[i] ?? '')?.get(serviceId) ?? []
+    const entries = firstLastLookup.get(route[i] ?? '')?.get(serviceId) ?? []
+    // Separate first/last rows at the same stop describe distinct route visits.
+    const candidates =
+      entries.length > 1
+        ? entries.filter((entry) => !usedEntries.has(entry))
+        : entries
     const nextCandidates =
       firstLastLookup.get(route[i + 1] ?? '')?.get(serviceId) ?? []
     const chosen = pickBestFirstLastEntry(
@@ -524,10 +531,9 @@ const alignRouteFirstLast = (
       nextCandidates,
     )
     aligned.push(chosen)
-    const chosenFirst = chosen ? getRefFirstMin(chosen) : null
-    if (chosenFirst !== null) {
-      prevFirstMin = chosenFirst
-    }
+    if (!chosen) continue
+    if (entries.length > 1) usedEntries.add(chosen)
+    prevFirstMin = getRefFirstMin(chosen) ?? prevFirstMin
   }
   return aligned
 }
@@ -633,12 +639,13 @@ const buildRailSegment = (
   operatingWindows: Readonly<Partial<Record<DayType, DayOperatingWindows>>>,
 ): TransitSegment => {
   const distM = haversineDistanceMeters(fromStop.point, toStop.point)
+  // MRT pruning uses an optimistic physical bound, not the ranking estimate.
   const minRideMs = isLrt
     ? Math.max(50_000, Math.round((distM / 10) * 1000 + 25_000))
-    : Math.max(75_000, Math.round((distM / 15) * 1000 + 35_000))
+    : Math.max(20_000, Math.round((distM / MRT_MAX_SPEED_MPS) * 1000 + 10_000))
   const estRideMs = isLrt
     ? Math.max(minRideMs, Math.round((distM / 7.5) * 1000 + 35_000))
-    : Math.max(minRideMs, Math.round((distM / 12.5) * 1000 + 50_000))
+    : Math.max(75_000, Math.round((distM / 12.5) * 1000 + 50_000))
   return {
     fromStopId: fromStop.id,
     toStopId: toStop.id,
