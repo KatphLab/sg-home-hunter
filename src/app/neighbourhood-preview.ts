@@ -35,10 +35,15 @@ export const createNeighbourhoodPreview = (
   }
 }
 
+export const AREA_RADIUS_METERS = 500
+
+export const isWithinArea = (
+  point: Coordinates,
+  centre: Coordinates,
+): boolean => haversineDistanceMeters(point, centre) <= AREA_RADIUS_METERS
+
 export const candidatesWithinArea = (
   preview: NeighbourhoodPreview,
   centre: Coordinates,
-): readonly BackwardLead[] =>
-  preview.leads.filter(
-    (lead) => haversineDistanceMeters(lead.stop.point, centre) <= 500,
-  )
+): BackwardLead[] =>
+  preview.leads.filter((lead) => isWithinArea(lead.stop.point, centre))

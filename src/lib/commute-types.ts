@@ -62,8 +62,6 @@ export interface SearchConstraints {
   readonly rideCapMinutes: number
 }
 
-export type SearchResultStatus = 'running' | 'completed' | 'partial'
-
 export interface CompletedSearchSnapshot {
   readonly version: 1
   readonly completedAtIso: string

@@ -8,18 +8,19 @@ import type {
   Stop,
 } from '@lib/commute-types.js'
 import { fetchTransitPlan, OneMapAuthError } from '@lib/onemap-client.js'
-import { haversineDistanceMeters } from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'
-import { checkedStopCount, showOutcome, showProof } from './area-result.js'
+import { checkedStopCount, showProof } from './area-result.js'
 import { renderCounters } from './dom-render.js'
 import {
   candidatesWithinArea,
+  isWithinArea,
   type NeighbourhoodPreview,
 } from './neighbourhood-preview.js'
 import {
   type AppContext,
   type AreaCheckState,
   refreshStopList,
+  showOutcome,
   syncAccountUi,
   syncConnectivity,
 } from './search-controller.js'
@@ -28,23 +29,31 @@ const proofWithinArea = (
   ctx: AppContext,
   centre: Coordinates,
 ): QualifiedStop | undefined =>
-  ctx.state.matches.find(
-    (entry) => haversineDistanceMeters(entry.stop.point, centre) <= 500,
-  )
+  ctx.state.matches.find((entry) => isWithinArea(entry.stop.point, centre))
 
-function* plannedProbes(
+const planAreaBatch = (
   leads: readonly BackwardLead[],
-): Generator<{ stop: Stop; departure: string }> {
+  { checkedDepartures, completedDepartures }: AreaCheckState,
+) => {
   const rounds = leads.reduce(
     (max, lead) => Math.max(max, lead.candidateDepartures.length),
     0,
   )
+  const probes = []
+  let incompleteCount = 0
   for (let round = 0; round < rounds; round += 1) {
     for (const lead of leads) {
       const departure = lead.candidateDepartures[round]
-      if (departure) yield { stop: lead.stop, departure }
+      if (!departure) continue
+      const key = `${lead.stop.id}@${departure}`
+      if (!checkedDepartures.has(key)) {
+        probes.push({ stop: lead.stop, departure, key })
+      } else if (!completedDepartures.has(key)) {
+        incompleteCount += 1
+      }
     }
   }
+  return { probes, incompleteCount }
 }
 
 const retainBoardings = (
@@ -69,7 +78,6 @@ const retainBoardings = (
     }
   }
   ctx.state.matches = [...matches.values()]
-  ctx.els.stopsMatchedValue.textContent = String(ctx.state.matches.length)
   refreshStopList(ctx)
 }
 
@@ -85,13 +93,10 @@ const runAreaBatch = async (
   const stopsById = new Map(
     ctx.state.inventory?.stops.map((stop) => [stop.id, stop]),
   )
-  const probes = [...plannedProbes(leads)].filter(
-    ({ stop, departure }) =>
-      !areaCheck.checkedDepartures.has(`${stop.id}@${departure}`),
-  )
+  const candidateIds = new Set(preview.leads.map((lead) => lead.stop.id))
+  const { probes, incompleteCount } = planAreaBatch(leads, areaCheck)
   areaCheck.hasMore = probes.length > 0
-  for (const [index, { stop, departure }] of probes.entries()) {
-    const key = `${stop.id}@${departure}`
+  for (const [index, { stop, departure, key }] of probes.entries()) {
     areaCheck.checkedDepartures.add(key)
     areaCheck.hasMore = index + 1 < probes.length
     areaCheck.checksPerformed += 1
@@ -109,10 +114,7 @@ const runAreaBatch = async (
     areaCheck.completedDepartures.add(key)
     renderCounters(
       ctx.els,
-      checkedStopCount(
-        areaCheck.completedDepartures,
-        new Set(preview.leads.map((lead) => lead.stop.id)),
-      ),
+      checkedStopCount(areaCheck.completedDepartures, candidateIds),
       preview.leads.length,
       ctx.state.matches.length,
     )
@@ -124,15 +126,6 @@ const runAreaBatch = async (
     }
     if (areaCheck.checksPerformed === 3) break
   }
-  const incompleteCount = [...plannedProbes(leads)].filter(
-    ({ stop, departure }) => {
-      const key = `${stop.id}@${departure}`
-      return (
-        areaCheck.checkedDepartures.has(key) &&
-        !areaCheck.completedDepartures.has(key)
-      )
-    },
-  ).length
   const exhaustion =
     incompleteCount > 0
       ? `No untried planned departures remain. ${String(incompleteCount)} attempted checks failed or were interrupted; these are not negative journey evidence.`
@@ -164,7 +157,6 @@ const showRoutingError = (ctx: AppContext, error: unknown): void => {
 const finishAreaCheck = ({ state, els }: AppContext): void => {
   const focusResult = document.activeElement === els.stopAreaButton
   state.abortController = null
-  state.isSearching = false
   els.stopAreaButton.hidden = true
   if (focusResult) els.areaResult.focus({ preventScroll: true })
 }
@@ -179,13 +171,12 @@ export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
     !account ||
     !areaCheck ||
     (areaCheck.hasRun && !areaCheck.hasMore) ||
-    state.isSearching ||
+    state.abortController ||
     !navigator.onLine
   )
     return
   const controller = new AbortController()
   state.abortController = controller
-  state.isSearching = true
   areaCheck.checksPerformed = 0
   areaCheck.hasRun = true
   els.checkAreaButton.disabled = true
@@ -199,7 +190,7 @@ export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
       showProof(ctx, existing)
       return
     }
-    const leads = [...candidatesWithinArea(preview, selectedArea)].sort(
+    const leads = candidatesWithinArea(preview, selectedArea).sort(
       (a, b) => a.estRideMs - b.estRideMs || a.stop.id.localeCompare(b.stop.id),
     )
     if (leads.length === 0) {

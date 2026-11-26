@@ -49,12 +49,10 @@ export interface AppState {
   inventory: StopInventory | null
   networkText: string | null
   account: OneMapAccount | null
-  workplace: Workplace | null
   matches: readonly QualifiedStop[]
   selectedStopId: string | null
   kindFilter: StopListKindFilter
   textFilter: string
-  isSearching: boolean
   abortController: AbortController | null
   preview: NeighbourhoodPreview | null
   selectedArea: Coordinates | null
@@ -74,13 +72,14 @@ export const syncConnectivity = (ctx: AppContext): void => {
     online &&
     state.inventory !== null &&
     state.networkText !== null &&
-    !state.isSearching
+    state.abortController === null
   renderConnectivityState(els, online, canStart)
   const canCheck = canStart && state.account !== null
   els.checkAreaButton.disabled =
     !canCheck || !state.selectedArea || state.areaCheck?.hasRun !== false
   els.checkAreaButton.hidden = state.areaCheck?.hasRun === true
-  els.checkMoreButton.hidden = !state.areaCheck?.hasMore || state.isSearching
+  els.checkMoreButton.hidden =
+    !state.areaCheck?.hasMore || state.abortController !== null
   els.checkMoreButton.disabled = !canCheck
 }
 
@@ -170,15 +169,22 @@ export const handleSignOut = (ctx: AppContext): void => {
   syncAccountUi(ctx)
 }
 
+export const showOutcome = (ctx: AppContext, message: string): void => {
+  const { els, state } = ctx
+  const count = state.areaCheck?.checksPerformed ?? 0
+  const checks = count === 1 ? 'check' : 'checks'
+  const outcome = `${message} ${String(count)} ${checks} performed.`
+  els.areaResult.hidden = false
+  els.areaResult.textContent = outcome
+  els.liveStatusRegion.textContent = outcome
+}
+
 const stopAreaCheck = (ctx: AppContext): void => {
-  if (!ctx.state.preview || !ctx.state.isSearching) return
-  ctx.state.abortController?.abort()
+  if (!ctx.state.preview || !ctx.state.abortController) return
+  ctx.state.abortController.abort()
   ctx.state.abortController = null
-  ctx.state.isSearching = false
   ctx.els.stopAreaButton.hidden = true
-  ctx.els.areaResult.hidden = false
-  ctx.els.areaResult.textContent = `Stopped. This area is not confirmed by these checks. ${String(ctx.state.areaCheck?.checksPerformed ?? 0)} checks performed.`
-  ctx.els.liveStatusRegion.textContent = ctx.els.areaResult.textContent
+  showOutcome(ctx, 'Stopped. This area is not confirmed by these checks.')
   syncConnectivity(ctx)
 }
 
@@ -192,12 +198,12 @@ const resetAreaSelection = (ctx: AppContext): void => {
   ctx.els.areaResult.hidden = true
   ctx.els.areaResult.textContent = ''
   ctx.els.checkMoreButton.hidden = true
-  ctx.els.resultStatusTag.textContent = 'Estimated preview'
+  renderStatusBadge(ctx.els.resultStatusTag, 'preview')
   selectStop(ctx, null)
 }
 
 export const stopActiveSearch = (ctx: AppContext): void => {
-  if (ctx.state.preview && ctx.state.isSearching) {
+  if (ctx.state.preview && ctx.state.abortController) {
     stopAreaCheck(ctx)
   } else {
     invalidatePreview(ctx)
@@ -241,10 +247,9 @@ export const selectArea = (
 
 export const invalidatePreview = (ctx: AppContext): void => {
   const { els, mapView, state } = ctx
-  const wasActive = state.preview !== null || state.isSearching
+  const wasActive = state.preview !== null || state.abortController !== null
   state.abortController?.abort()
   state.abortController = null
-  state.isSearching = false
   state.preview = null
   state.selectedArea = null
   els.previewPanel.hidden = true
@@ -254,9 +259,8 @@ export const invalidatePreview = (ctx: AppContext): void => {
   els.checkAreaButton.disabled = true
   els.areaResult.textContent = ''
   els.stopSearchButton.hidden = true
-  if (wasActive) mapView.clearPreview()
   if (wasActive) {
-    state.workplace = null
+    mapView.clearPreview()
     state.matches = []
     mapView.clearStops()
     mapView.setWorkplace(null)
@@ -283,7 +287,6 @@ const displayPreview = (
     hasRun: false,
     hasMore: false,
   }
-  state.workplace = preview.workplace
   state.matches = []
   mapView.clearStops()
   mapView.setWorkplace(preview.workplace)
@@ -313,8 +316,7 @@ const displayPreview = (
   )
   renderCounters(els, 0, preview.leads.length, state.matches.length)
   selectStop(ctx, null)
-  els.resultStatusTag.textContent = 'Estimated preview'
-  els.resultStatusTag.className = 'status-tag status-tag--muted'
+  renderStatusBadge(els.resultStatusTag, 'preview')
   const marginCount = preview.leads.filter((lead) =>
     hasTenMinuteMargin(lead.estRideMs, preview.constraints.rideCapMinutes),
   ).length
@@ -365,7 +367,7 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   if (
     !inventory ||
     networkText === null ||
-    state.isSearching ||
+    state.abortController ||
     !navigator.onLine
   ) {
     return
@@ -392,7 +394,6 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   }
   const controller = new AbortController()
   state.abortController = controller
-  state.isSearching = true
   syncConnectivity(ctx)
   els.stopSearchButton.hidden = false
   try {
@@ -419,7 +420,6 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
     showPreviewError(ctx, error)
   } finally {
     if (controller === state.abortController) {
-      state.isSearching = false
       state.abortController = null
       els.stopSearchButton.hidden = true
       syncConnectivity(ctx)

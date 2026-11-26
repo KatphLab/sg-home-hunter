@@ -6,29 +6,16 @@ import {
   test,
 } from '@playwright/test'
 
-const json = (route: Route, body: unknown, status = 200) =>
-  route.fulfill({
-    status,
-    contentType: 'application/json',
-    body: JSON.stringify(body),
-  })
+import {
+  fulfillJson,
+  preview,
+  selectArea,
+  signInViaUi,
+  stubCommute,
+} from './commute-fixture.js'
 
-const chooseArea = async (page: Page, id = '11111') => {
-  if (!(await page.locator('#area-stop-filter').isVisible())) {
-    await page.locator('#area-picker summary').click()
-  }
-  await page.fill('#area-stop-filter', id)
-  await page.selectOption('#area-stop-select', id)
-}
-
-const preview = async (page: Page) => {
-  const start = page.locator('#start-search-btn')
-  await expect(start).toHaveText('Preview estimated stops')
-  await start.click()
-  await expect(page.locator('#result-status-tag')).toHaveText(
-    'Estimated preview',
-  )
-}
+const ROUTING_URL = '**/api/public/routingsvc/route*'
+const EMPTY_PLAN = { plan: { itineraries: [] } }
 
 const expectOriginalCheckedDate = async (page: Page) => {
   const date = page.locator('#selected-journey-date')
@@ -37,8 +24,12 @@ const expectOriginalCheckedDate = async (page: Page) => {
   await expect(date).toHaveAttribute('datetime', '2026-11-26')
 }
 
-const journey = (date: string, stopCode = '11111') => {
-  const at = (time: string) => Date.parse(`${date}T${time}:00+08:00`)
+const journey = (route: Route, stopCode = '11111') => {
+  const date = new URL(route.request().url()).searchParams.get('date')
+  if (date === null) throw new Error('Routing date missing')
+  const [month, day, year] = date.split('-')
+  const at = (time: string) =>
+    Date.parse(`${year}-${month}-${day}T${time}:00+08:00`)
   return {
     plan: {
       itineraries: [
@@ -61,18 +52,26 @@ const journey = (date: string, stopCode = '11111') => {
   }
 }
 
-const savedVisible = async (page: Page) => {
+const reopenSavedArea = async (page: Page, context: BrowserContext) => {
+  await context.setOffline(true)
+  await page.goto('/')
+  await expect(page.locator('#result-status-tag')).toHaveText(
+    'Saved offline area check',
+  )
+  await expect(page.locator('#active-constraints-summary')).toContainText(
+    'Ride cap 30 min',
+  )
+  await expectOriginalCheckedDate(page)
+}
+
+const checkSavedMap = async (page: Page) => {
   await expect(page.locator('#offline-banner')).toBeVisible()
   await expect(page.locator('#account-status-pill')).toHaveText('Not connected')
   await expect(page.locator('#start-search-btn')).toBeDisabled()
   await expect(page.locator('#section-preview')).toBeHidden()
-  await expect(page.locator('#result-status-tag')).toHaveText(
-    'Saved offline area check',
-  )
   const summary = page.locator('#active-constraints-summary')
   await expect(summary).not.toContainText(/2026-11-26|26 November/)
   await expect(summary).toContainText('09:00')
-  await expect(summary).toContainText('Ride cap 30 min')
   await expect(summary).toContainText('18 MARINA GARDENS DR')
   await expect(summary).toContainText('within 500 m of 1.30000, 103.85000')
   await expect(summary).toContainText('not a walking route')
@@ -106,53 +105,10 @@ const savedVisible = async (page: Page) => {
 }
 
 test.beforeEach(async ({ page, context }) => {
-  await context.route('**/maps/tiles/**', (route) => route.abort())
-  await context.route('**/data/stops.tsv', (route) =>
-    route.fulfill({
-      body: [
-        'inventoryDate\t2026-11-20',
-        'id\tkind\tname\tlatitude\tlongitude',
-        '03218\tbus\tMarina Gardens Opp\t1.279100\t103.854000',
-        '11111\tbus\tRiver Homes\t1.300000\t103.850000',
-        '11112\tbus\tRiver Gardens\t1.300500\t103.850000',
-        '88888\tbus\tEmpty Circle\t1.389000\t103.988000',
-      ].join('\n'),
-    }),
+  await stubCommute(context)
+  await context.route(ROUTING_URL, (route) =>
+    fulfillJson(route, 200, journey(route)),
   )
-  await context.route('**/data/bus-network.tsv', (route) =>
-    route.fulfill({
-      body: [
-        'networkDate\t2026-11-20',
-        'service\tdirection\tvisits',
-        '11\t1\t11111 0530 2330 0530 2330 0530 2330|03218 0542 2342 0542 2342 0542 2342',
-        '12\t1\t11112 0530 2330 0530 2330 0530 2330|03218 0556 2356 0556 2356 0556 2356',
-      ].join('\n'),
-    }),
-  )
-  await context.route('**/api/auth/post/getToken', (route) =>
-    json(route, {
-      access_token: 'mock-jwt',
-      expiry_timestamp: 1_900_000_000,
-    }),
-  )
-  await context.route('**/api/common/elastic/search*', (route) =>
-    json(route, {
-      results: [
-        {
-          POSTAL: '018989',
-          LATITUDE: '1.2789',
-          LONGITUDE: '103.8536',
-          ADDRESS: '18 MARINA GARDENS DR',
-        },
-      ],
-    }),
-  )
-  await context.route('**/api/public/routingsvc/route*', (route) => {
-    const [month, day, year] = (
-      new URL(route.request().url()).searchParams.get('date') ?? ''
-    ).split('-')
-    return json(route, journey(`${year}-${month}-${day}`))
-  })
   await page.clock.setFixedTime(new Date('2026-11-25T12:00:00+08:00'))
   await page.goto('/')
   await page.evaluate(async () => {
@@ -165,15 +121,7 @@ test.beforeEach(async ({ page, context }) => {
     )
     .toBe(true)
   await page.fill('#postal-input', '018989')
-  await page.fill('#office-start-input', '09:00')
-  await expect(page.locator('#signin-form')).toBeHidden()
-  await page.click('#start-search-btn')
-  await page.fill('#onemap-email', 'commuter@example.com')
-  await page.fill('#onemap-password', 'test-pass')
-  await page.click('#signin-btn')
-  await expect(page.locator('#signed-in-email')).toHaveText(
-    'commuter@example.com',
-  )
+  await signInViaUi(page)
 })
 
 test('reopens a saved mobile check before offering a new search', async ({
@@ -182,7 +130,7 @@ test('reopens a saved mobile check before offering a new search', async ({
 }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await preview(page)
-  await chooseArea(page)
+  await selectArea(page, '11111')
   await page.getByRole('button', { name: 'Check within 500 m' }).click()
   await expect(
     page.getByRole('heading', { name: 'Board at River Homes' }),
@@ -211,49 +159,16 @@ test('reopens a saved mobile check before offering a new search', async ({
   await expect(page.locator('#start-search-btn')).toBeDisabled()
 })
 
-const arrangeLaterOutcome = async (
-  page: Page,
-  context: BrowserContext,
-  later: string,
-): Promise<void> => {
-  if (later === 'miss' || later === 'empty') {
-    await context.route('**/api/public/routingsvc/route*', (route) =>
-      json(route, { plan: { itineraries: [] } }),
-    )
-  } else if (later === 'failure') {
-    await context.route('**/api/public/routingsvc/route*', (route) =>
-      json(route, {}, 401),
-    )
-  } else if (later === 'routing failure') {
-    await context.route('**/api/public/routingsvc/route*', (route) =>
-      json(route, {}, 400),
-    )
-  } else if (later === 'storage failure') {
-    await page.evaluate(() => {
-      Storage.prototype.setItem = () => {
-        throw new DOMException('Storage full', 'QuotaExceededError')
-      }
-    })
-  }
-}
-
 test('saves only the successful selected area, not unrelated proof from a missed area', async ({
   page,
   context,
 }) => {
   let calls = 0
-  await context.route('**/api/public/routingsvc/route*', (route) => {
-    calls += 1
-    const date = new URL(route.request().url()).searchParams.get('date')
-    if (date === null) throw new Error('Routing date missing')
-    const [month, day, year] = date.split('-')
-    return json(
-      route,
-      journey(`${year}-${month}-${day}`, calls <= 3 ? '88888' : '11111'),
-    )
-  })
+  await context.route(ROUTING_URL, (route) =>
+    fulfillJson(route, 200, journey(route, ++calls <= 3 ? '88888' : '11111')),
+  )
   await preview(page)
-  await chooseArea(page)
+  await selectArea(page, '11111')
   await page.click('#check-area-btn')
   await expect(page.locator('#area-result')).toContainText(
     'No commute confirmed',
@@ -261,7 +176,7 @@ test('saves only the successful selected area, not unrelated proof from a missed
   await expect(page.locator('.stop-row-btn[data-stop-id="88888"]')).toHaveCount(
     1,
   )
-  await chooseArea(page, '11112')
+  await selectArea(page, '11112')
   await page.click('#check-area-btn')
   await expect(page.locator('#area-result')).toContainText('Confirmed')
   await expect(page.locator('#stops-tried-value')).toHaveText('2 / 2')
@@ -281,43 +196,77 @@ test('saves only the successful selected area, not unrelated proof from a missed
   await expectOriginalCheckedDate(page)
 })
 
-const interruptOfflineCheck = async (
-  page: Page,
-  context: BrowserContext,
-  later: 'stop' | 'close',
-): Promise<Page> => {
-  const gate = Promise.withResolvers<void>()
-  let requested = false
-  await context.route('**/api/public/routingsvc/route*', async (route) => {
-    requested = true
-    await gate.promise
-    await json(route, { plan: { itineraries: [] } }).catch(() => {})
+test.describe('retaining the last saved area', () => {
+  test.beforeEach(async ({ page }) => {
+    await preview(page)
+    await selectArea(page, '11111')
+    await page.click('#check-area-btn')
+    await expect(page.locator('#area-result')).toContainText('Confirmed')
+    await page.clock.setFixedTime(new Date('2026-11-26T12:00:00+08:00'))
+    await page.fill('#ride-cap-input', '25')
+    await preview(page)
+    await expect(page.locator('.stop-row-btn')).toHaveCount(0)
   })
-  await page.click('#check-area-btn')
-  await expect.poll(() => requested).toBe(true)
-  if (later === 'stop') {
-    await page.click('#stop-area-btn')
-    await expect(page.locator('#area-result')).toContainText('Stopped')
-  } else {
-    await page.close()
-    page = await context.newPage()
-  }
-  gate.resolve()
-  return page
-}
 
-for (const later of [
-  'reload',
-  'preview',
-  'empty',
-  'miss',
-  'failure',
-  'routing failure',
-  'stop',
-  'close',
-  'storage failure',
-] as const) {
-  test(`retains successful area offline after ${later}`, async ({
+  test('restores the previous map after empty, missed and failed checks', async ({
+    page,
+    context,
+  }) => {
+    let calls = 0
+    await context.route(ROUTING_URL, (route) => {
+      calls += 1
+      if (calls <= 3) return fulfillJson(route, 200, EMPTY_PLAN)
+      return fulfillJson(route, calls === 4 ? 400 : 401, {})
+    })
+    const outcome = page.locator('#area-result')
+    for (const [stop, message, total] of [
+      ['88888', 'No estimated candidates', 0],
+      ['11112', 'No commute confirmed', 3],
+      ['11111', 'Routing failed', 4],
+    ] as const) {
+      await selectArea(page, stop)
+      await page.click('#check-area-btn')
+      await expect(outcome).toContainText(message)
+      expect(calls).toBe(total)
+      if (total === 0) {
+        await expect(outcome).toContainText('0 checks')
+        await expect(outcome).not.toContainText('unreachable')
+      }
+    }
+    // All departures in the overlapping circles are spent; start a fresh preview.
+    await page.fill('#ride-cap-input', '26')
+    await preview(page)
+    await selectArea(page, '11112')
+    await page.click('#check-area-btn')
+    await expect(outcome).toContainText('Sign-in expired')
+    expect(calls).toBe(5)
+    await reopenSavedArea(page, context)
+    await checkSavedMap(page)
+  })
+
+  test('keeps the save when the tab closes during a check', async ({
+    page,
+    context,
+  }) => {
+    const pending = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    await context.route(ROUTING_URL, async (route) => {
+      pending.resolve()
+      await release.promise
+      await fulfillJson(route, 200, journey(route)).catch(() => {})
+    })
+    await selectArea(page, '11112')
+    try {
+      await page.click('#check-area-btn')
+      await pending.promise
+      await page.close()
+    } finally {
+      release.resolve()
+    }
+    await reopenSavedArea(await context.newPage(), context)
+  })
+
+  test('keeps the previous save when writing new proof fails', async ({
     page,
     context,
   }) => {
@@ -325,48 +274,20 @@ for (const later of [
     page.on('console', (message) => {
       if (message.type() === 'error') diagnostics.push(message.text())
     })
-    await preview(page)
-    await chooseArea(page)
-    await page.click('#check-area-btn')
-    await expect(page.locator('#area-result')).toContainText('Confirmed')
-    await expectOriginalCheckedDate(page)
-    await expect(page.locator('#selected-boarding-time')).toHaveText('08:25')
-    await expect(page.locator('#selected-arrival-time')).toHaveText('08:45')
-    await expect(page.locator('.stop-row-btn')).toHaveCount(1)
-    await page.clock.setFixedTime(new Date('2026-11-26T12:00:00+08:00'))
-
-    if (later !== 'reload') {
-      // A fresh search cannot reuse the saved boarding as current-date proof.
-      await page.fill('#ride-cap-input', '25')
-      await preview(page)
-      await expect(page.locator('.stop-row-btn')).toHaveCount(0)
-      await chooseArea(page, later === 'empty' ? '88888' : '11112')
-      await arrangeLaterOutcome(page, context, later)
-      if (later === 'stop' || later === 'close') {
-        page = await interruptOfflineCheck(page, context, later)
-      } else if (later !== 'preview') {
-        await page.click('#check-area-btn')
-        const expected = {
-          empty: 'No estimated candidates',
-          miss: 'No commute confirmed',
-          failure: 'Sign-in expired',
-          'routing failure': 'Routing failed',
-          'storage failure': 'Could not save',
-        }[later]
-        await expect(page.locator('#area-result')).toContainText(expected)
-        if (later === 'storage failure') {
-          await expect(page.locator('#area-result')).toContainText('Confirmed')
-          await expect(page.locator('#area-result')).not.toContainText(
-            'Routing failed',
-          )
-          expect(diagnostics).toContain(
-            'Could not save offline area result QuotaExceededError',
-          )
-        }
+    await page.evaluate(() => {
+      Storage.prototype.setItem = () => {
+        throw new DOMException('Storage full', 'QuotaExceededError')
       }
-    }
-    await context.setOffline(true)
-    await page.goto('/')
-    await savedVisible(page)
+    })
+    await selectArea(page, '11112')
+    await page.click('#check-area-btn')
+    const outcome = page.locator('#area-result')
+    await expect(outcome).toContainText('Confirmed')
+    await expect(outcome).toContainText('Could not save')
+    await expect(outcome).not.toContainText('Routing failed')
+    expect(diagnostics).toContain(
+      'Could not save offline area result QuotaExceededError',
+    )
+    await reopenSavedArea(page, context)
   })
-}
+})

@@ -114,16 +114,12 @@ const wireUiEvents = (ctx: AppContext): void => {
     event.preventDefault()
     void handleSearchSubmit(ctx)
   })
-  els.stopSearchButton.addEventListener('click', () => stopActiveSearch(ctx))
-  els.checkAreaButton.addEventListener(
-    'click',
-    () => void checkSelectedArea(ctx),
-  )
-  els.checkMoreButton.addEventListener(
-    'click',
-    () => void checkSelectedArea(ctx),
-  )
-  els.stopAreaButton.addEventListener('click', () => stopActiveSearch(ctx))
+  for (const button of [els.stopSearchButton, els.stopAreaButton]) {
+    button.addEventListener('click', () => stopActiveSearch(ctx))
+  }
+  for (const button of [els.checkAreaButton, els.checkMoreButton]) {
+    button.addEventListener('click', () => void checkSelectedArea(ctx))
+  }
   window.addEventListener('online', () => syncConnectivity(ctx))
   window.addEventListener('offline', () => syncConnectivity(ctx))
 }
@@ -142,12 +138,10 @@ const bootstrap = async (): Promise<void> => {
     inventory: null,
     networkText: null,
     account: null,
-    workplace: null,
     matches: [],
     selectedStopId: null,
     kindFilter: 'all',
     textFilter: '',
-    isSearching: false,
     abortController: null,
     preview: null,
     selectedArea: null,

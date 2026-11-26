@@ -3,23 +3,18 @@ import type {
   QualifiedStop,
 } from '@lib/commute-types.js'
 import { saveCompletedResult } from '@lib/saved-result-store.js'
-import { haversineDistanceMeters } from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'
 import {
   renderConstraintsSummary,
   renderCounters,
   renderStatusBadge,
 } from './dom-render.js'
-import { candidatesWithinArea } from './neighbourhood-preview.js'
-import { type AppContext, selectStop } from './search-controller.js'
-
-export const showOutcome = (ctx: AppContext, message: string): void => {
-  ctx.els.areaResult.hidden = false
-  const count = ctx.state.areaCheck?.checksPerformed ?? 0
-  const checks = count === 1 ? 'check' : 'checks'
-  ctx.els.areaResult.textContent = `${message} ${String(count)} ${checks} performed.`
-  ctx.els.liveStatusRegion.textContent = ctx.els.areaResult.textContent
-}
+import { candidatesWithinArea, isWithinArea } from './neighbourhood-preview.js'
+import {
+  type AppContext,
+  selectStop,
+  showOutcome,
+} from './search-controller.js'
 
 export const checkedStopCount = (
   departures: ReadonlySet<string>,
@@ -33,14 +28,14 @@ export const checkedStopCount = (
 
 export const showProof = (ctx: AppContext, proof: QualifiedStop): void => {
   showOutcome(ctx, 'Confirmed a qualifying boarding within 500 m.')
-  ctx.els.resultStatusTag.textContent = 'Area confirmed'
+  renderStatusBadge(ctx.els.resultStatusTag, 'confirmed')
   selectStop(ctx, proof.stop.id)
   ctx.els.selectedStopCard.scrollIntoView({ block: 'nearest' })
   const { preview, selectedArea, inventory, areaCheck, matches } = ctx.state
-  if (!preview || !selectedArea || !inventory) return
+  if (!preview || !selectedArea || !inventory || !areaCheck) return
   const candidates = candidatesWithinArea(preview, selectedArea)
   const triedCount = checkedStopCount(
-    areaCheck?.completedDepartures ?? new Set(),
+    areaCheck.completedDepartures,
     new Set(candidates.map((lead) => lead.stop.id)),
   )
   try {
@@ -52,9 +47,8 @@ export const showProof = (ctx: AppContext, proof: QualifiedStop): void => {
       constraints: preview.constraints,
       triedCount,
       totalCount: candidates.length,
-      matches: matches.filter(
-        (entry) =>
-          haversineDistanceMeters(entry.stop.point, selectedArea) <= 500,
+      matches: matches.filter((entry) =>
+        isWithinArea(entry.stop.point, selectedArea),
       ),
       checkedArea: { centre: selectedArea, proofStopId: proof.stop.id },
     })
@@ -72,12 +66,14 @@ export const applySnapshot = (
   snapshot: CompletedSearchSnapshot,
 ): void => {
   const { els, mapView, state } = ctx
-  state.workplace = snapshot.workplace
   state.matches = snapshot.matches
   mapView.clearStops()
   mapView.setWorkplace(snapshot.workplace)
   for (const entry of snapshot.matches) mapView.addQualifyingStop(entry)
-  renderStatusBadge(els.resultStatusTag, 'saved')
+  renderStatusBadge(
+    els.resultStatusTag,
+    snapshot.checkedArea ? 'savedArea' : 'saved',
+  )
   renderCounters(
     els,
     snapshot.triedCount,
@@ -93,7 +89,6 @@ export const applySnapshot = (
   if (snapshot.checkedArea) {
     const { centre, proofStopId } = snapshot.checkedArea
     mapView.setAreaSelection(centre, false)
-    els.resultStatusTag.textContent = 'Saved offline area check'
     const scope = `Checked area: within 500 m of ${centre.latitude.toFixed(5)}, ${centre.longitude.toFixed(5)} (straight-line distance, not a walking route). Only verified boardings are shown; this is not an island-wide scan.`
     els.activeConstraintsSummary.textContent += ` ${scope}`
     els.liveStatusRegion.textContent = `Saved offline area check. ${scope}`

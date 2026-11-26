@@ -9,11 +9,13 @@ import type {
   Workplace,
 } from '@lib/commute-types.js'
 import L from 'leaflet'
-import { hasTenMinuteMargin } from './neighbourhood-preview.js'
+import {
+  AREA_RADIUS_METERS,
+  hasTenMinuteMargin,
+} from './neighbourhood-preview.js'
 
 const SINGAPORE_CENTER: [number, number] = [1.3521, 103.8198]
 const DEFAULT_ZOOM = 12
-const ZONE_RADIUS_METERS = 500
 const ONEMAP_TILE_URL =
   'https://www.onemap.gov.sg/maps/tiles/Default/{z}/{x}/{y}.png'
 
@@ -218,7 +220,7 @@ export class CommuteMapView {
     const centre: [number, number] = [point.latitude, point.longitude]
     L.circle(centre, {
       pane: 'selectionPane',
-      radius: ZONE_RADIUS_METERS,
+      radius: AREA_RADIUS_METERS,
       color: '#343c46',
       weight: 2,
       dashArray: '6 4',
@@ -239,7 +241,7 @@ export class CommuteMapView {
       entry.stop.point.longitude,
     ]
     L.circle(coords, {
-      radius: ZONE_RADIUS_METERS,
+      radius: AREA_RADIUS_METERS,
       pane: 'commuteZonePane',
       renderer: this.zoneRenderer,
       fillColor: '#1B5E4B',

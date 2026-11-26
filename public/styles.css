@@ -476,8 +476,7 @@ select {
   border-color: #0d3228;
 }
 
-.status-tag--offline,
-.status-tag--partial {
+.status-tag--offline {
   background: var(--status-amber-bg);
   color: var(--status-amber-ink);
   border-color: var(--status-amber-border);

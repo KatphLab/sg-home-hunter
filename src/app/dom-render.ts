@@ -1,7 +1,6 @@
 import type {
   OneMapAccount,
   QualifiedStop,
-  SearchResultStatus,
   Stop,
   Workplace,
 } from '@lib/commute-types.js'
@@ -209,43 +208,30 @@ export const renderCommuteHint = (els: AppElements): void => {
   els.commuteHint.textContent = `${arrival}${cap} excludes walking and waiting.`
 }
 
+const resultBadges = {
+  idle: ['No search yet', 'muted'],
+  planning: ['Planning departures', 'running'],
+  preview: ['Estimated preview', 'muted'],
+  confirmed: ['Area confirmed', 'muted'],
+  saved: ['Saved offline result', 'ok'],
+  savedArea: ['Saved offline area check', 'ok'],
+} as const
+
 export const renderStatusBadge = (
   tag: HTMLElement,
-  mode: SearchResultStatus | 'saved' | 'idle' | 'planning',
-  passNumber?: number,
-  totalPasses?: number,
+  mode: keyof typeof resultBadges,
 ): void => {
-  const labelMap: Readonly<Record<typeof mode, string>> = {
-    idle: 'No search yet',
-    planning: 'Planning departures',
-    running: `Searching — Pass ${String(passNumber ?? 1)} of ${String(totalPasses ?? 1)}`,
-    partial: 'Partial result',
-    completed: 'Completed',
-    saved: 'Saved offline result',
-  }
-  const classMap: Readonly<Record<typeof mode, string>> = {
-    idle: 'status-tag status-tag--muted',
-    planning: 'status-tag status-tag--running',
-    running: 'status-tag status-tag--running',
-    partial: 'status-tag status-tag--partial',
-    completed: 'status-tag status-tag--ok',
-    saved: 'status-tag status-tag--ok',
-  }
-  tag.textContent = labelMap[mode]
-  tag.className = classMap[mode]
+  const [label, tone] = resultBadges[mode]
+  tag.textContent = label
+  tag.className = `status-tag status-tag--${tone}`
 }
 
 export const renderConstraintsSummary = (
   els: AppElements,
-  workplace: Workplace | null,
+  workplace: Workplace,
   officeStart: string,
   rideCapMinutes: number,
 ): void => {
-  if (!workplace) {
-    els.activeConstraintsSummary.textContent =
-      'Run a search to map 500 m housing-search zones across Singapore.'
-    return
-  }
   const target =
     workplace.kind === 'postal'
       ? `Postal ${workplace.postalCode} (${workplace.label})`
