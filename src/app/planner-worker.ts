@@ -19,7 +19,7 @@ self.onmessage = ({ data }: MessageEvent<PlannerRequest>): void => {
   const { inventory, networkText, workplace, constraints } = data
   const networkIndex = buildTransitNetworkIndex({
     inventory,
-    ...parseBusNetworkTsv(networkText),
+    busRoutes: parseBusNetworkTsv(networkText).busRoutes,
   })
   self.postMessage(
     planBackwardLeads({ inventory, networkIndex, workplace, constraints }),

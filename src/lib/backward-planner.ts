@@ -419,9 +419,6 @@ const stepLabelAcrossSegment = (
   tracker: FrontierTracker,
 ): void => {
   const nextMinRide = label.minRideMs + seg.minRideMs
-  if (nextMinRide > ctx.rideCapMs) {
-    return
-  }
   const maxStepMs = ctx.rideCapMs - label.minRideMs
   const singleInterval = intervals.length === 1
   for (const { startMs, endMs } of intervals) {

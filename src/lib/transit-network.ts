@@ -23,9 +23,6 @@ const SAME_COMPLEX_RAIL_M = 150
 const GRID_CELL_DEG = 0.0045
 const CC_SHUTTLE_MAX_STATION = 6
 const CC_PEAK_SPUR_MAX_STATION = 32
-const MRT_HEADWAY_MS = 240_000
-const LRT_HEADWAY_MS = 300_000
-const BUS_HEADWAY_MS = 720_000
 const BUS_MAX_SPEED_MPS = 18
 // Use the faster rail ceiling for both MRT and LRT when ruling journeys out.
 const RAIL_MAX_SPEED_MPS = 25
@@ -39,13 +36,6 @@ const LINEAR_MRT_PREFIXES: readonly string[] = [
   'TE',
 ]
 
-interface NetworkProvenance {
-  readonly source: string
-  readonly version: string
-  readonly license: string
-  readonly timingKind: 'first_last_estimated'
-}
-
 const RAIL_ALL_DAY_WINDOWS: Readonly<
   Partial<Record<DayType, DayOperatingWindows>>
 > = {
@@ -57,9 +47,7 @@ const RAIL_ALL_DAY_WINDOWS: Readonly<
 export interface TransitPattern {
   readonly patternId: string
   readonly serviceId: string
-  readonly serviceName: string
   readonly mode: TransitMode
-  readonly headwayMs: number
   readonly isLoop?: boolean
   readonly segments: readonly TransitSegment[]
 }
@@ -73,24 +61,14 @@ export interface TransferLink {
 }
 
 export interface TransitNetworkIndex {
-  readonly version: 1
-  readonly networkDate: string
-  readonly inventoryDate: string
-  readonly provenance: readonly NetworkProvenance[]
   readonly patterns: readonly TransitPattern[]
   readonly transfers: readonly TransferLink[]
 }
 
 interface BuildTransitNetworkInput {
   readonly inventory: StopInventory
-  readonly networkDate: string
   readonly busRoutes: Readonly<Record<string, readonly (readonly BusVisit[])[]>>
   readonly maxTransferWalkMeters?: number
-}
-
-interface ParsedFirstLastEntry {
-  readonly serviceId: string
-  readonly windows: Readonly<Partial<Record<DayType, OperatingWindow>>>
 }
 
 export interface BusVisit {
@@ -265,15 +243,12 @@ interface RawClockPair {
 const parseRawClockPair = (
   firstRaw: string,
   lastRaw: string,
-  weekdayRaw?: RawClockPair,
 ): RawClockPair | undefined => {
   if (firstRaw === '-' || lastRaw === '-') {
     return undefined
   }
-  const firstMin =
-    firstRaw === '=' ? (weekdayRaw?.firstMin ?? null) : parseHHMM(firstRaw)
-  const lastMin =
-    lastRaw === '=' ? (weekdayRaw?.lastMin ?? null) : parseHHMM(lastRaw)
+  const firstMin = parseHHMM(firstRaw)
+  const lastMin = parseHHMM(lastRaw)
   if (firstMin === null || lastMin === null) {
     return undefined
   }
@@ -297,29 +272,18 @@ const toOperatingWindow = (
   return { firstMin: raw.firstMin, lastMin }
 }
 
-/** Parse one line from busrouter.sg firstlast.min.json into per-day-type operating windows. */
+/** Parse six explicit visit clocks or '-' into per-day-type operating windows. */
 export const parseBusRouterFirstLastLine = (
   line: string,
-): ParsedFirstLastEntry | null => {
+): Readonly<Partial<Record<DayType, OperatingWindow>>> | null => {
   const parts = line.trim().split(/\s+/)
-  if (parts.length !== 7) {
+  if (parts.length !== 6) {
     return null
   }
-  const [
-    serviceId = '',
-    wdF = '',
-    wdL = '',
-    satF = '',
-    satL = '',
-    sunF = '',
-    sunL = '',
-  ] = parts
-  if (serviceId.length === 0) {
-    return null
-  }
+  const [wdF = '', wdL = '', satF = '', satL = '', sunF = '', sunL = ''] = parts
   const weekdayRaw = parseRawClockPair(wdF, wdL)
-  const saturdayRaw = parseRawClockPair(satF, satL, weekdayRaw)
-  const sundayRaw = parseRawClockPair(sunF, sunL, weekdayRaw)
+  const saturdayRaw = parseRawClockPair(satF, satL)
+  const sundayRaw = parseRawClockPair(sunF, sunL)
   const weekday = toOperatingWindow(weekdayRaw)
   const saturday = toOperatingWindow(saturdayRaw)
   const sunday = toOperatingWindow(sundayRaw)
@@ -333,13 +297,15 @@ export const parseBusRouterFirstLastLine = (
   if (sunday) {
     windows.sunday_holiday = sunday
   }
-  return { serviceId, windows }
+  return windows
 }
 
-const getRefFirstMin = (entry: ParsedFirstLastEntry): number | null =>
-  entry.windows.weekday?.firstMin ??
-  entry.windows.saturday?.firstMin ??
-  entry.windows.sunday_holiday?.firstMin ??
+const getRefFirstMin = (
+  windows: Readonly<Partial<Record<DayType, OperatingWindow>>>,
+): number | null =>
+  windows.weekday?.firstMin ??
+  windows.saturday?.firstMin ??
+  windows.sunday_holiday?.firstMin ??
   null
 
 // Dwell, typical operating speed and timetable deltas belong in estimates.
@@ -349,12 +315,12 @@ const minimumRideMs = (distanceM: number, maxSpeedMps: number): number =>
 const computeBusSegmentTiming = (
   fromStop: Stop,
   toStop: Stop,
-  fromEntry: ParsedFirstLastEntry | undefined,
-  toEntry: ParsedFirstLastEntry | undefined,
+  fromWindows: Readonly<Partial<Record<DayType, OperatingWindow>>> | undefined,
+  toWindows: Readonly<Partial<Record<DayType, OperatingWindow>>> | undefined,
 ): TransitSegment => {
   const distM = haversineDistanceMeters(fromStop.point, toStop.point)
-  const fromFirst = fromEntry ? getRefFirstMin(fromEntry) : null
-  const toFirst = toEntry ? getRefFirstMin(toEntry) : null
+  const fromFirst = fromWindows ? getRefFirstMin(fromWindows) : null
+  const toFirst = toWindows ? getRefFirstMin(toWindows) : null
   const deltaMin =
     fromFirst !== null && toFirst !== null ? toFirst - fromFirst : null
   const deltaMs =
@@ -377,7 +343,7 @@ const computeBusSegmentTiming = (
     toStopId: toStop.id,
     minRideMs,
     estRideMs,
-    ...(fromEntry ? { operatingWindows: fromEntry.windows } : {}),
+    ...(fromWindows ? { operatingWindows: fromWindows } : {}),
   }
 }
 
@@ -390,8 +356,7 @@ const buildBusPatternsForRoute = (
   const entries = route.map((visit) =>
     visit.times === undefined
       ? undefined
-      : (parseBusRouterFirstLastLine(`${serviceId} ${visit.times}`) ??
-        undefined),
+      : (parseBusRouterFirstLastLine(visit.times) ?? undefined),
   )
   const chunks: TransitSegment[][] = []
   let current: TransitSegment[] = []
@@ -418,9 +383,7 @@ const buildBusPatternsForRoute = (
         ? `bus:${serviceId}:${String(dirIdx)}`
         : `bus:${serviceId}:${String(dirIdx)}:${String(chunkIdx)}`,
     serviceId,
-    serviceName: serviceId,
     mode: 'BUS',
-    headwayMs: BUS_HEADWAY_MS,
     segments,
   }))
 }
@@ -519,9 +482,7 @@ const makeRailPattern = (
   return {
     patternId,
     serviceId,
-    serviceName: serviceId,
     mode: isLrt ? 'TRAM' : 'SUBWAY',
-    headwayMs: isLrt ? LRT_HEADWAY_MS : MRT_HEADWAY_MS,
     ...(options?.isLoop ? { isLoop: true } : {}),
     segments,
   }
@@ -738,28 +699,13 @@ const buildTransferLinks = (
   return links
 }
 
-/** Build a reusable dated transit network index from bus and rail datasets. */
+/** Build a reusable transit network index from bus and rail datasets. */
 export const buildTransitNetworkIndex = (
   input: BuildTransitNetworkInput,
 ): TransitNetworkIndex => {
   const stopsById = new Map(input.inventory.stops.map((s) => [s.id, s]))
   const busPatterns = buildBusPatterns(stopsById, input.busRoutes)
   const railPatterns = buildRailTopologyPatterns(input.inventory, stopsById)
-  const provenance: NetworkProvenance[] = [
-    {
-      source: 'data.busrouter.sg/v1/raw/bus-routes.datamall.json',
-      version: input.networkDate,
-      license: 'LTA DataMall / Singapore Open Data Licence v1.0',
-      timingKind: 'first_last_estimated',
-    },
-    {
-      source: 'stops.tsv rail topology (cheeaun/sgraildata codes)',
-      version: input.inventory.inventoryDate,
-      license: 'SODL v1.0 / ODbL / CC BY-SA 4.0',
-      timingKind: 'first_last_estimated',
-    },
-  ]
-
   const patterns = [...busPatterns, ...railPatterns]
   const transfers = buildTransferLinks(
     input.inventory.stops,
@@ -767,10 +713,6 @@ export const buildTransitNetworkIndex = (
   )
 
   return {
-    version: 1,
-    networkDate: input.networkDate,
-    inventoryDate: input.inventory.inventoryDate,
-    provenance,
     patterns,
     transfers,
   }

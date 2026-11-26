@@ -69,6 +69,7 @@ Configure these under **Settings → Secrets and variables → Actions** (pre-cr
 
 - Bundled bus stops, service routes, and first/last bus timings (`public/data/stops.tsv`, `public/data/bus-network.tsv`) incorporate data from **Land Transport Authority (LTA) DataMall**, accessed via [BusRouter SG](https://data.busrouter.sg/), and are used under the terms of the [Singapore Open Data Licence v1.0](https://www.lta.gov.sg/content/ltagov/en/footer/data-gov-sg-terms-of-use.html).
 - Bus timetables use the [DataMall route rows](https://data.busrouter.sg/v1/raw/bus-routes.datamall.json): service, direction and stop sequence identify each visit, even when a route returns to the same stop. The planner uses straight-line distance at a speed ceiling to rule out over-cap rides; estimated travel and dwell times guide departure probes, not the minimum ride time.
+- Each timed visit has three first/last clock pairs: weekday, Saturday, and Sunday/public holiday. `-` means no service for that day; a visit without timings has unknown hours and remains eligible for verification.
 - MRT and LRT station codes and coordinates incorporate data from [cheeaun/sgraildata](https://github.com/cheeaun/sgraildata).
 - Circle Line first loop trains use station- and direction-specific times from [Land Transport Guru](https://landtransportguru.net/train/ccl/). Weekday through-service windows are anchored to [Esplanade's timetable](https://landtransportguru.net/esplanade-station/); other station offsets and reverse-direction peak bounds are estimates, not published departures.
 

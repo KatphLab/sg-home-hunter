@@ -85,7 +85,6 @@ describe('backward-search verification', () => {
     const constraints = { searchDate, officeStart: '09:00', rideCapMinutes: 1 }
     const networkIndex = buildTransitNetworkIndex({
       inventory,
-      networkDate: searchDate,
       busRoutes: {},
     })
     const result = await verify({
