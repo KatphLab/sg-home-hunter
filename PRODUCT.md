@@ -20,12 +20,12 @@ Help a Singapore house hunter identify neighbourhoods within 500 m straight-line
 
 ## Positioning
 
-A zero-backend, client-only PWA that signs directly into the house hunter's own OneMap account from the browser (no proxy or shared API key). It plans with the island-wide network but limits boarding-stop requests to an approximate radius based on the ride cap. Walking and waiting do not count against the ride cap.
+A zero-backend, client-only PWA that signs directly into the house hunter's own OneMap account from the browser (no proxy or shared API key). It previews estimated stops from the local transit network, then checks for one qualifying boarding within 500 m of the user's chosen point. Walking and waiting do not count against the ride cap.
 
 ## Operating Context
 
-- **Search session (online):** User signs in directly to OneMap with their own email and password (password is not saved when a token suffices; credentials and tokens are never logged), reviews the exact search date and bundled inventory date, sees the warning that closing the app stops the search, and monitors live results as patches appear while distinguishing stops tried from matching stops. They may stop early for an explicitly labelled partial result.
-- **Property viewing (offline):** User reopens the installed PWA on their phone offline without signing in again to inspect the last completed workplace, housing-search zone, selectable stops, journey details, and original search date, office start time, and ride cap. Starting, stopping, or closing a subsequent search must leave the last completed result intact until another search completes.
+- **Search session (online):** User connects OneMap, resolves a workplace and sees local estimates before any routing request. They select an area by map or keyboard, then explicitly check up to three planned departures. Stop after the first qualifying boarding inside the selected circle; offer another batch only while untried probes remain. Reuse proof and checked departures within the same workplace/constraints session. Failed requests, bounded misses and zero estimates are not evidence of unreachability.
+- **Property viewing (offline):** User reopens the last successful area check without signing in to inspect its verified map, selected-area scope, stops and journeys with the original date, office start and ride cap. Previews, unsuccessful checks and interruptions must leave that completed evidence intact.
 
 ## Capabilities and Constraints
 
@@ -55,7 +55,7 @@ A zero-backend, client-only PWA that signs directly into the house hunter's own 
 ## Product Principles
 
 1. **Honesty over false precision:** Label 500 m zones as straight-line proximity, frame each journey as one match for one displayed date, distinguish tried from matched stops, and never imply unshaded areas are unreachable.
-2. **Progressive discovery:** Show verified matches as they arrive. Limit direct requests by distance without discarding a boarding outside the radius that a returned journey already proves.
+2. **Estimates first, proof on demand:** Show estimated ride-cap margin separately from verified journeys. Limit requests to the selected circle and stop after one useful commute; preserve outside-circle proof for later selections.
 3. **Offline resilience for the last completed map:** Never overwrite a completed search when starting, stopping, or abandoning a new one; keep the saved map, constraints, and evidence usable without tiles or sign-in.
 4. **Strict client-only account boundary:** Keep credentials and tokens strictly in the user's browser session, never behind a proxy, never logged, and never blame the password when a sign-in response cannot be read.
 5. **Equal access beyond the map:** Provide a full accessible stop and journey list synced with the map so every recommendation can be evaluated without using the map.

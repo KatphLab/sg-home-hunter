@@ -82,10 +82,15 @@ const runAreaBatch = async (
   const stopsById = new Map(
     ctx.state.inventory?.stops.map((stop) => [stop.id, stop]),
   )
-  for (const { stop, departure } of plannedProbes(leads)) {
+  const probes = [...plannedProbes(leads)].filter(
+    ({ stop, departure }) =>
+      !areaCheck.checkedDepartures.has(`${stop.id}@${departure}`),
+  )
+  areaCheck.hasMore = probes.length > 0
+  for (const [index, { stop, departure }] of probes.entries()) {
     const key = `${stop.id}@${departure}`
-    if (areaCheck.checkedDepartures.has(key)) continue
     areaCheck.checkedDepartures.add(key)
+    areaCheck.hasMore = index + 1 < probes.length
     areaCheck.checksPerformed += 1
     showOutcome(ctx, 'Checking planned departures within 500 m.')
     const result = await fetchTransitPlan({
@@ -100,6 +105,7 @@ const runAreaBatch = async (
     retainBoardings(ctx, result.itineraries, preview.constraints, stopsById)
     const proof = proofWithinArea(ctx, centre)
     if (proof) {
+      areaCheck.hasMore = false
       showProof(ctx, proof)
       return
     }
@@ -107,7 +113,9 @@ const runAreaBatch = async (
   }
   showOutcome(
     ctx,
-    'Not confirmed in these checks. Other qualifying journeys may exist.',
+    areaCheck.hasMore
+      ? 'Not confirmed in these checks. Other qualifying journeys may exist.'
+      : 'Not confirmed in these checks. All planned departures for this area have been checked. Other qualifying journeys may exist.',
   )
 }
 
@@ -120,7 +128,7 @@ export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
     !inventory ||
     !account ||
     !areaCheck ||
-    areaCheck.hasRun ||
+    (areaCheck.hasRun && !areaCheck.hasMore) ||
     state.isSearching ||
     !navigator.onLine
   )
