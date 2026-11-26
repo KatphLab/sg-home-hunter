@@ -1,6 +1,5 @@
 import { createDestinationStationJourney } from '@lib/commute-rules.js'
 import type {
-  CompletedSearchSnapshot,
   Coordinates,
   OneMapAccount,
   QualifiedStop,
@@ -30,12 +29,12 @@ import {
   renderStatusBadge,
 } from './dom-render.js'
 import type { CommuteMapView } from './map-view.js'
-import { planInWorker } from './plan-in-worker.js'
 import {
   candidatesWithinArea,
   createNeighbourhoodPreview,
   type NeighbourhoodPreview,
 } from './neighbourhood-preview.js'
+import { planInWorker } from './plan-in-worker.js'
 
 export interface AreaCheckState {
   readonly checkedDepartures: Set<string>
@@ -74,7 +73,8 @@ export const syncConnectivity = (ctx: AppContext): void => {
     state.networkText !== null &&
     !state.isSearching
   renderConnectivityState(els, online, canStart)
-  els.checkAreaButton.disabled = !canStart || !state.selectedArea || state.areaCheck?.hasRun !== false
+  els.checkAreaButton.disabled =
+    !canStart || !state.selectedArea || state.areaCheck?.hasRun !== false
 }
 
 export const syncAccountUi = (ctx: AppContext): void => {
@@ -106,36 +106,6 @@ export const selectStop = (ctx: AppContext, stopId: string | null): void => {
   refreshStopList(ctx)
 }
 
-export const applySnapshot = (
-  ctx: AppContext,
-  snapshot: CompletedSearchSnapshot,
-): void => {
-  const { els, mapView, state } = ctx
-  state.workplace = snapshot.workplace
-  state.matches = snapshot.matches
-  mapView.clearStops()
-  mapView.setWorkplace(snapshot.workplace)
-  for (const entry of snapshot.matches) {
-    mapView.addQualifyingStop(entry)
-  }
-  mapView.fitToMatches(snapshot.workplace, snapshot.matches)
-  renderStatusBadge(els.resultStatusTag, 'saved')
-  renderCounters(
-    els,
-    snapshot.triedCount,
-    snapshot.totalCount,
-    snapshot.matches.length,
-  )
-  renderConstraintsSummary(
-    els,
-    snapshot.workplace,
-    snapshot.constraints.searchDate,
-    snapshot.constraints.officeStart,
-    snapshot.constraints.rideCapMinutes,
-  )
-  selectStop(ctx, null)
-}
-
 const resolveWorkplaceFromForm = (
   els: AppElements,
   inventory: StopInventory,
@@ -163,7 +133,6 @@ const resolveWorkplaceFromForm = (
   }
   return resolvePostalWorkplace(postalCode, account.accessToken)
 }
-
 
 export const handleSignIn = async (ctx: AppContext): Promise<void> => {
   const { els, state } = ctx
@@ -278,7 +247,8 @@ export const invalidatePreview = (ctx: AppContext): void => {
     selectStop(ctx, null)
     renderCounters(els, 0, 0, 0)
     renderStatusBadge(els.resultStatusTag, 'idle')
-    els.activeConstraintsSummary.textContent = 'Submit the current workplace and constraints to preview estimates.'
+    els.activeConstraintsSummary.textContent =
+      'Submit the current workplace and constraints to preview estimates.'
     els.liveStatusRegion.textContent = 'Preview cleared.'
   }
   syncConnectivity(ctx)
@@ -290,19 +260,28 @@ const displayPreview = (
 ): void => {
   const { els, mapView, state } = ctx
   state.preview = preview
-  state.areaCheck = { checkedDepartures: new Set(), checksPerformed: 0, hasRun: false }
+  state.areaCheck = {
+    checkedDepartures: new Set(),
+    checksPerformed: 0,
+    hasRun: false,
+  }
   state.workplace = preview.workplace
   state.matches = []
   mapView.clearStops()
   mapView.setWorkplace(preview.workplace)
   mapView.setPreview(preview.leads, preview.constraints.rideCapMinutes)
   if (preview.workplace.kind === 'station' && state.inventory) {
-    const station = findRailStationById(state.inventory, preview.workplace.stationId)
+    const station = findRailStationById(
+      state.inventory,
+      preview.workplace.stationId,
+    )
     if (station) {
       const match = {
         stop: station,
         journey: createDestinationStationJourney(
-          station, preview.constraints.searchDate, preview.constraints.officeStart,
+          station,
+          preview.constraints.searchDate,
+          preview.constraints.officeStart,
         ),
       }
       state.matches = [match]
@@ -310,22 +289,40 @@ const displayPreview = (
     }
   }
   renderConstraintsSummary(
-    els, preview.workplace, preview.constraints.searchDate,
-    preview.constraints.officeStart, preview.constraints.rideCapMinutes,
+    els,
+    preview.workplace,
+    preview.constraints.searchDate,
+    preview.constraints.officeStart,
+    preview.constraints.rideCapMinutes,
   )
   renderCounters(els, 0, 0, state.matches.length)
   selectStop(ctx, null)
   els.resultStatusTag.textContent = 'Estimated preview'
   els.resultStatusTag.className = 'status-tag status-tag--muted'
   const marginCount = preview.leads.filter(
-    (lead) => preview.constraints.rideCapMinutes * 60_000 - lead.estRideMs >= 600_000,
+    (lead) =>
+      preview.constraints.rideCapMinutes * 60_000 - lead.estRideMs >= 600_000,
   ).length
   els.previewSummary.textContent = `${String(preview.leads.length)} estimated stops: ${String(marginCount)} at least 10 min below cap; ${String(preview.leads.length - marginCount)} less than 10 min below. No routing requests made.`
   els.liveStatusRegion.textContent = els.previewSummary.textContent
-  els.areaSummary.textContent = 'Choose a stop below or click the map to select a 500 m area.'
+  els.areaSummary.textContent =
+    'Choose a stop below or click the map to select a 500 m area.'
   els.areaStopFilter.value = ''
   refreshAreaStopPicker(ctx)
   els.previewPanel.hidden = false
+}
+
+const showPreviewError = (ctx: AppContext, error: unknown): void => {
+  if (error instanceof OneMapAuthError) {
+    ctx.state.account = null
+    renderInlineError(ctx.els.authError, error.message)
+    syncAccountUi(ctx)
+  } else {
+    renderInlineError(
+      ctx.els.searchError,
+      normalizeError(error, 'Unable to prepare preview.').message,
+    )
+  }
 }
 
 export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
@@ -338,12 +335,21 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   renderInlineError(els.searchError, null)
   const rideCapMinutes = Number(els.rideCapInput.value)
   const officeStart = els.officeStartInput.value
-  if (!Number.isInteger(rideCapMinutes) || rideCapMinutes < 1 || rideCapMinutes > 180) {
-    renderInlineError(els.searchError, 'Ride cap must be a whole number between 1 and 180 minutes.')
+  if (
+    !Number.isInteger(rideCapMinutes) ||
+    rideCapMinutes < 1 ||
+    rideCapMinutes > 180
+  ) {
+    renderInlineError(
+      els.searchError,
+      'Ride cap must be a whole number between 1 and 180 minutes.',
+    )
     return
   }
   const constraints = {
-    searchDate: getDefaultSearchDate(Date.now()), officeStart, rideCapMinutes,
+    searchDate: getDefaultSearchDate(Date.now()),
+    officeStart,
+    rideCapMinutes,
   }
   els.plannedSearchDate.textContent = constraints.searchDate
   const controller = new AbortController()
@@ -359,22 +365,20 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
     state.matches = []
     mapViewForPlanning(ctx, workplace)
     const plan = await planInWorker(
-      { inventory, networkText, workplace, constraints }, controller.signal,
+      { inventory, networkText, workplace, constraints },
+      controller.signal,
     )
     if (controller === state.abortController && plan) {
-      displayPreview(ctx, createNeighbourhoodPreview(plan, workplace, constraints))
+      displayPreview(
+        ctx,
+        createNeighbourhoodPreview(plan, workplace, constraints),
+      )
     }
   } catch (error) {
     if (controller !== state.abortController) {
       return
     }
-    if (error instanceof OneMapAuthError) {
-      state.account = null
-      renderInlineError(els.authError, error.message)
-      syncAccountUi(ctx)
-    } else {
-      renderInlineError(els.searchError, normalizeError(error, 'Unable to prepare preview.').message)
-    }
+    showPreviewError(ctx, error)
   } finally {
     if (controller === state.abortController) {
       state.isSearching = false
@@ -391,5 +395,6 @@ const mapViewForPlanning = (ctx: AppContext, workplace: Workplace): void => {
   selectStop(ctx, null)
   renderCounters(ctx.els, 0, 0, 0)
   renderStatusBadge(ctx.els.resultStatusTag, 'planning')
-  ctx.els.liveStatusRegion.textContent = 'Planning local estimates. No routing requests.'
+  ctx.els.liveStatusRegion.textContent =
+    'Planning local estimates. No routing requests.'
 }

@@ -1,35 +1,41 @@
 import type { BackwardLead } from '@lib/backward-planner.js'
 import { evaluateBoardings } from '@lib/commute-rules.js'
-import type { Coordinates, OneMapAccount, QualifiedStop, SearchConstraints, Stop } from '@lib/commute-types.js'
-import { formatJourneyTimes, formatRideMinutes, formatServiceChain } from '@lib/journey-format.js'
+import type {
+  Coordinates,
+  OneMapAccount,
+  QualifiedStop,
+  SearchConstraints,
+  Stop,
+} from '@lib/commute-types.js'
 import { fetchTransitPlan, OneMapAuthError } from '@lib/onemap-client.js'
 import { haversineDistanceMeters } from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'
-import { candidatesWithinArea, type NeighbourhoodPreview } from './neighbourhood-preview.js'
-import { type AppContext, type AreaCheckState, refreshStopList, selectStop, syncAccountUi, syncConnectivity } from './search-controller.js'
+import { showOutcome, showProof } from './area-result.js'
+import {
+  candidatesWithinArea,
+  type NeighbourhoodPreview,
+} from './neighbourhood-preview.js'
+import {
+  type AppContext,
+  type AreaCheckState,
+  refreshStopList,
+  syncAccountUi,
+  syncConnectivity,
+} from './search-controller.js'
 
-
-const proofWithinArea = (ctx: AppContext, centre: Coordinates): QualifiedStop | undefined =>
-  ctx.state.matches.find((entry) => haversineDistanceMeters(entry.stop.point, centre) <= 500)
-
-const showOutcome = (ctx: AppContext, message: string): void => {
-  ctx.els.areaResult.hidden = false
-  ctx.els.areaResult.textContent = `${message} ${String(ctx.state.areaCheck?.checksPerformed ?? 0)} checks performed.`
-  ctx.els.liveStatusRegion.textContent = ctx.els.areaResult.textContent
-}
-
-const showProof = (ctx: AppContext, proof: QualifiedStop): void => {
-  const times = formatJourneyTimes(proof.journey)
-  ctx.els.areaJourney.textContent = `${proof.stop.id} ${proof.stop.name} — ${proof.journey.searchDate}. Board ${times.boarding}; ${formatServiceChain(proof.journey)}; ride ${formatRideMinutes(proof.journey.rideMs)}; workplace arrival ${times.arrival}, including final walk. Verified 500 m shading is straight-line proximity to this boarding, not a walking route from your selection.`
-  ctx.els.areaJourney.hidden = false
-  showOutcome(ctx, 'Confirmed a qualifying boarding within 500 m.')
-  ctx.els.resultStatusTag.textContent = 'Area confirmed'
-  selectStop(ctx, proof.stop.id)
-}
-
+const proofWithinArea = (
+  ctx: AppContext,
+  centre: Coordinates,
+): QualifiedStop | undefined =>
+  ctx.state.matches.find(
+    (entry) => haversineDistanceMeters(entry.stop.point, centre) <= 500,
+  )
 
 function* plannedProbes(leads: readonly BackwardLead[]) {
-  const rounds = leads.reduce((max, lead) => Math.max(max, lead.candidateDepartures.length), 0)
+  const rounds = leads.reduce(
+    (max, lead) => Math.max(max, lead.candidateDepartures.length),
+    0,
+  )
   for (let round = 0; round < rounds; round += 1) {
     for (const lead of leads) {
       const departure = lead.candidateDepartures[round]
@@ -45,8 +51,12 @@ const retainBoardings = (
   stopsById: ReadonlyMap<string, Stop>,
 ): void => {
   // Parse everything before publishing: malformed routes are failures, not negative evidence.
-  const journeys = itineraries.flatMap((raw) => evaluateBoardings(constraints, raw).journeys)
-  const matches = new Map(ctx.state.matches.map((entry) => [entry.stop.id, entry]))
+  const journeys = itineraries.flatMap(
+    (raw) => evaluateBoardings(constraints, raw).journeys,
+  )
+  const matches = new Map(
+    ctx.state.matches.map((entry) => [entry.stop.id, entry]),
+  )
   for (const journey of journeys) {
     const stop = stopsById.get(journey.stopId)
     if (stop && !matches.has(stop.id)) {
@@ -69,7 +79,9 @@ const runAreaBatch = async (
   controller: AbortController,
   leads: readonly BackwardLead[],
 ): Promise<void> => {
-  const stopsById = new Map(ctx.state.inventory?.stops.map((stop) => [stop.id, stop]))
+  const stopsById = new Map(
+    ctx.state.inventory?.stops.map((stop) => [stop.id, stop]),
+  )
   for (const { stop, departure } of plannedProbes(leads)) {
     const key = `${stop.id}@${departure}`
     if (areaCheck.checkedDepartures.has(key)) continue
@@ -77,9 +89,12 @@ const runAreaBatch = async (
     areaCheck.checksPerformed += 1
     showOutcome(ctx, 'Checking planned departures within 500 m.')
     const result = await fetchTransitPlan({
-      start: stop.point, end: preview.workplace.point,
-      searchDate: preview.constraints.searchDate, departureTimeHHMMSS: departure,
-      accessToken: account.accessToken, signal: controller.signal,
+      start: stop.point,
+      end: preview.workplace.point,
+      searchDate: preview.constraints.searchDate,
+      departureTimeHHMMSS: departure,
+      accessToken: account.accessToken,
+      signal: controller.signal,
     })
     if (controller !== ctx.state.abortController) return
     retainBoardings(ctx, result.itineraries, preview.constraints, stopsById)
@@ -90,13 +105,26 @@ const runAreaBatch = async (
     }
     if (areaCheck.checksPerformed === 3) break
   }
-  showOutcome(ctx, 'Not confirmed in these checks. Other qualifying journeys may exist.')
+  showOutcome(
+    ctx,
+    'Not confirmed in these checks. Other qualifying journeys may exist.',
+  )
 }
 
 export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
   const { state, els } = ctx
   const { preview, selectedArea, inventory, account, areaCheck } = state
-  if (!preview || !selectedArea || !inventory || !account || !areaCheck || areaCheck.hasRun || state.isSearching || !navigator.onLine) return
+  if (
+    !preview ||
+    !selectedArea ||
+    !inventory ||
+    !account ||
+    !areaCheck ||
+    areaCheck.hasRun ||
+    state.isSearching ||
+    !navigator.onLine
+  )
+    return
   const controller = new AbortController()
   state.abortController = controller
   state.isSearching = true
@@ -116,18 +144,35 @@ export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
       (a, b) => a.estRideMs - b.estRideMs || a.stop.id.localeCompare(b.stop.id),
     )
     if (leads.length === 0) {
-      showOutcome(ctx, 'No estimated candidates here. This does not establish that no journey exists.')
+      showOutcome(
+        ctx,
+        'No estimated candidates here. This does not establish that no journey exists.',
+      )
       return
     }
-    await runAreaBatch(ctx, preview, selectedArea, account, areaCheck, controller, leads)
+    await runAreaBatch(
+      ctx,
+      preview,
+      selectedArea,
+      account,
+      areaCheck,
+      controller,
+      leads,
+    )
   } catch (error) {
     if (controller !== state.abortController) return
     if (error instanceof OneMapAuthError) {
       state.account = null
-      showOutcome(ctx, 'Sign-in expired. Connect OneMap again; failed routing is not evidence of no journey.')
+      showOutcome(
+        ctx,
+        'Sign-in expired. Connect OneMap again; failed routing is not evidence of no journey.',
+      )
       syncAccountUi(ctx)
     } else {
-      showOutcome(ctx, `Routing failed: ${normalizeError(error, 'Unable to check this area.').message} This is not evidence of no journey.`)
+      showOutcome(
+        ctx,
+        `Routing failed: ${normalizeError(error, 'Unable to check this area.').message} This is not evidence of no journey.`,
+      )
     }
   } finally {
     if (controller === state.abortController) {

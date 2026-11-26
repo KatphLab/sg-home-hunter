@@ -3,6 +3,7 @@ import { loadCompletedResult } from '@lib/saved-result-store.js'
 import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
 import { normalizeError } from '@utils/guards.js'
 import { checkSelectedArea } from './area-check.js'
+import { applySnapshot } from './area-result.js'
 import {
   collectAppElements,
   getSelectedWorkplaceKind,
@@ -15,7 +16,6 @@ import { CommuteMapView } from './map-view.js'
 import {
   type AppContext,
   type AppState,
-  applySnapshot,
   handleSearchSubmit,
   handleSignIn,
   handleSignOut,
@@ -101,7 +101,10 @@ const wireUiEvents = (ctx: AppContext): void => {
     void handleSearchSubmit(ctx)
   })
   els.stopSearchButton.addEventListener('click', () => stopActiveSearch(ctx))
-  els.checkAreaButton.addEventListener('click', () => void checkSelectedArea(ctx))
+  els.checkAreaButton.addEventListener(
+    'click',
+    () => void checkSelectedArea(ctx),
+  )
   els.stopAreaButton.addEventListener('click', () => stopActiveSearch(ctx))
   window.addEventListener('online', () => syncConnectivity(ctx))
   window.addEventListener('offline', () => syncConnectivity(ctx))
