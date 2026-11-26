@@ -2,6 +2,7 @@
 
 ## 2026-11-26
 
+- Save a completed search offline when every stop with a failed routing request later has a confirmed journey. Unresolved failures still leave the previous offline result intact.
 - Keep late bus departures and after-midnight trains eligible for verification. Bind first/last bus times to each visit in route order instead of guessing from nearby stops' clocks.
 - Keep short LRT, MRT and bus journeys eligible when their estimated ride time exceeds the cap. OneMap's actual in-vehicle time decides whether they qualify.
 - Count time spent aboard a stopped vehicle toward the ride cap when the passenger stays on for the next service.

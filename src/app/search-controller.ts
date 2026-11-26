@@ -214,7 +214,11 @@ const finalizeSearchRun = (
     )
   }
 
-  if (result.failedQueries > 0 && !result.authExpired) {
+  if (
+    result.status === 'partial' &&
+    result.failedQueries > 0 &&
+    !result.authExpired
+  ) {
     const noun = result.failedQueries === 1 ? 'request' : 'requests'
     renderInlineError(
       els.searchError,

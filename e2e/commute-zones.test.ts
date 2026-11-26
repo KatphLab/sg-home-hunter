@@ -447,10 +447,15 @@ test.describe('House Hunter PWA acceptance', () => {
   }) => {
     test.setTimeout(60_000)
     await page.clock.install({ time: new Date('2026-05-29T09:00:00+08:00') })
+    let failedFirstPunggolProbe = false
     await context.route('**/api/public/routingsvc/route*', (route) => {
       const url = new URL(route.request().url())
       const start = url.searchParams.get('start') ?? ''
       if (start.startsWith('1.4036')) {
+        if (!failedFirstPunggolProbe) {
+          failedFirstPunggolProbe = true
+          return fulfillJson(route, 400, { error: 'routing request failed' })
+        }
         return fulfillJson(route, 200, {
           plan: {
             itineraries: [
@@ -485,6 +490,7 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#result-status-tag')).toHaveText('Completed', {
       timeout: 25_000,
     })
+    await expect(page.locator('#search-error')).toBeHidden()
 
     // Search B: start station search with a held request, then click Stop search -> Partial result.
     await context.unroute('**/api/public/routingsvc/route*')

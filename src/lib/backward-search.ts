@@ -75,6 +75,7 @@ export interface RunBackwardSearchOptions {
 
 interface VerificationTracker {
   readonly triedStopIds: Set<string>
+  readonly failedStopIds: Set<string>
   readonly qualifiedByStopId: Map<string, QualifiedStop>
   readonly inventoryById: ReadonlyMap<string, Stop>
   readonly queriedKeys: Set<string>
@@ -214,6 +215,7 @@ const verifyStopDeparture = async (
     if (options.signal.aborted) {
       return 'stop'
     }
+    tracker.failedStopIds.add(stop.id)
     tracker.errorsCount += 1
     publishSnapshot(tracker, passNumber)
     return 'ok'
@@ -324,6 +326,7 @@ export const runBackwardCommuteSearch = async (
   )
   const tracker: VerificationTracker = {
     triedStopIds: new Set<string>(),
+    failedStopIds: new Set<string>(),
     qualifiedByStopId: new Map<string, QualifiedStop>(),
     inventoryById,
     queriedKeys: new Set<string>(),
@@ -353,7 +356,13 @@ export const runBackwardCommuteSearch = async (
       break
     }
   }
-  if (options.signal.aborted || tracker.errorsCount > 0) {
+  for (const stopId of tracker.failedStopIds) {
+    if (!tracker.qualifiedByStopId.has(stopId)) {
+      status = 'partial'
+      break
+    }
+  }
+  if (options.signal.aborted) {
     status = 'partial'
   }
 
