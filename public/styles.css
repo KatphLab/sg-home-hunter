@@ -465,21 +465,10 @@ select {
 }
 
 .signed-in-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
   padding: 8px 10px;
   background: var(--surface-white);
   border: 1px solid var(--border-rule);
   border-radius: 6px;
-}
-
-.signed-in-email {
-  font-weight: 600;
-  font-size: 0.84rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .inline-alert {

@@ -26,8 +26,10 @@ describe('onemap-client', () => {
         ),
       )
     const account = await signInToOneMap('u@example.com', 'pass', okFetch)
-    expect(account.email).toBe('u@example.com')
-    expect(account.accessToken).toBe('tok-1')
+    expect(account).toEqual({
+      accessToken: 'tok-1',
+      expiryTimestamp: 1_900_000_000,
+    })
 
     const networkErrFetch = (): Promise<Response> =>
       Promise.reject(new TypeError('Failed to fetch'))

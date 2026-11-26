@@ -132,7 +132,6 @@ export const signInToOneMap = async (
 
   const expiry = Number(payload['expiry_timestamp'])
   return {
-    email: trimmedEmail,
     accessToken: payload['access_token'],
     expiryTimestamp: Number.isFinite(expiry) ? expiry : 0,
   }

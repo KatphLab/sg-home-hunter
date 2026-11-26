@@ -78,7 +78,6 @@ export interface CompletedSearchSnapshot {
 }
 
 export interface OneMapAccount {
-  readonly email: string
   readonly accessToken: string
   readonly expiryTimestamp: number
 }

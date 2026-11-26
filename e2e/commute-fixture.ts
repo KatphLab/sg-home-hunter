@@ -93,9 +93,7 @@ export const submitOneMapCredentials = async (page: Page): Promise<void> => {
 export const signInViaUi = async (page: Page): Promise<void> => {
   await page.click('#start-search-btn')
   await submitOneMapCredentials(page)
-  await expect(page.locator('#signed-in-email')).toHaveText(
-    'commuter@example.com',
-  )
+  await expect(page.locator('#account-status-pill')).toHaveText('Connected')
 }
 
 export const selectArea = async (page: Page, stopId: string): Promise<void> => {

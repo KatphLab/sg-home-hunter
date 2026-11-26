@@ -37,6 +37,7 @@ import {
   hasTenMinuteMargin,
   type NeighbourhoodPreview,
 } from './neighbourhood-preview.js'
+import { saveOneMapAccount } from './onemap-session.js'
 import { planInWorker } from './plan-in-worker.js'
 import { stationLabel } from './station-autocomplete.js'
 
@@ -90,6 +91,15 @@ export const syncConnectivity = (ctx: AppContext): void => {
 export const syncAccountUi = (ctx: AppContext): void => {
   renderAccountState(ctx.els, ctx.state.account)
   syncConnectivity(ctx)
+}
+
+export const setOneMapAccount = (
+  ctx: AppContext,
+  account: OneMapAccount | null,
+): void => {
+  ctx.state.account = account
+  saveOneMapAccount(account)
+  syncAccountUi(ctx)
 }
 
 export const refreshStopList = (ctx: AppContext): void => {
@@ -153,8 +163,7 @@ export const handleSignIn = async (ctx: AppContext): Promise<void> => {
       els.passwordInput.value,
     )
     els.passwordInput.value = ''
-    state.account = account
-    syncAccountUi(ctx)
+    setOneMapAccount(ctx, account)
     els.startSearchButton.focus()
   } catch (error) {
     renderInlineError(
@@ -169,8 +178,7 @@ export const handleSignIn = async (ctx: AppContext): Promise<void> => {
 
 export const handleSignOut = (ctx: AppContext): void => {
   invalidatePreview(ctx)
-  ctx.state.account = null
-  syncAccountUi(ctx)
+  setOneMapAccount(ctx, null)
 }
 
 export const showOutcome = (ctx: AppContext, message: string): void => {
@@ -358,9 +366,8 @@ const showPreviewError = (
   if (planning) renderStatusBadge(ctx.els.resultStatusTag, 'idle')
   ctx.els.liveStatusRegion.textContent = 'Unable to prepare preview.'
   if (error instanceof OneMapAuthError) {
-    ctx.state.account = null
     renderInlineError(ctx.els.authError, error.message)
-    syncAccountUi(ctx)
+    setOneMapAccount(ctx, null)
     openSignIn(ctx.els)
   } else {
     renderInlineError(

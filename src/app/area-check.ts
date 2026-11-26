@@ -20,8 +20,8 @@ import {
   type AppContext,
   type AreaCheckState,
   refreshStopList,
+  setOneMapAccount,
   showOutcome,
-  syncAccountUi,
   syncConnectivity,
 } from './search-controller.js'
 
@@ -172,12 +172,11 @@ const runAreaBatch = async (
 
 const showRoutingError = (ctx: AppContext, error: unknown): void => {
   if (error instanceof OneMapAuthError) {
-    ctx.state.account = null
     showOutcome(
       ctx,
       'Sign-in expired. Connect OneMap again; failed routing is not evidence of no journey.',
     )
-    syncAccountUi(ctx)
+    setOneMapAccount(ctx, null)
   } else {
     showOutcome(
       ctx,
