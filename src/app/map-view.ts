@@ -2,12 +2,20 @@ import {
   OFFLINE_REGION_LABELS,
   SINGAPORE_OUTLINE_GEOJSON,
 } from '@config/singapore-outline.js'
-import type { QualifiedStop, Workplace } from '@lib/commute-types.js'
+import type { BackwardLead } from '@lib/backward-planner.js'
+import type {
+  Coordinates,
+  QualifiedStop,
+  Workplace,
+} from '@lib/commute-types.js'
 import L from 'leaflet'
+import {
+  AREA_RADIUS_METERS,
+  hasTenMinuteMargin,
+} from './neighbourhood-preview.js'
 
 const SINGAPORE_CENTER: [number, number] = [1.3521, 103.8198]
 const DEFAULT_ZOOM = 12
-const ZONE_RADIUS_METERS = 500
 const ONEMAP_TILE_URL =
   'https://www.onemap.gov.sg/maps/tiles/Default/{z}/{x}/{y}.png'
 
@@ -60,13 +68,20 @@ export class CommuteMapView {
   private readonly zoneLayerGroup: L.LayerGroup
   private readonly markerLayerGroup: L.LayerGroup
   private readonly workplaceLayerGroup: L.LayerGroup
+  private readonly estimateLayerGroup: L.LayerGroup
+  private readonly selectionLayerGroup: L.LayerGroup
+  private readonly estimateRenderer: L.Canvas
   private readonly stopMarkers = new Map<
     string,
     { readonly marker: L.Marker; readonly button: HTMLButtonElement }
   >()
   private readonly onSelectStop: (stopId: string) => void
 
-  constructor(container: HTMLElement, onSelectStop: (stopId: string) => void) {
+  constructor(
+    container: HTMLElement,
+    onSelectStop: (stopId: string) => void,
+    onSelectArea: (point: Coordinates) => void,
+  ) {
     this.onSelectStop = onSelectStop
     this.map = L.map(container, {
       center: SINGAPORE_CENTER,
@@ -80,6 +95,13 @@ export class CommuteMapView {
     this.zoneLayerGroup = L.layerGroup().addTo(this.map)
     this.markerLayerGroup = L.layerGroup().addTo(this.map)
     this.workplaceLayerGroup = L.layerGroup().addTo(this.map)
+    this.estimateRenderer = L.canvas({ pane: 'estimatePane' })
+    this.estimateLayerGroup = L.layerGroup().addTo(this.map)
+    this.selectionLayerGroup = L.layerGroup().addTo(this.map)
+    this.map.on('click', (event: L.LeafletMouseEvent) =>
+      onSelectArea({ latitude: event.latlng.lat, longitude: event.latlng.lng }),
+    )
+    new ResizeObserver(() => this.invalidateSize()).observe(container)
   }
 
   private setupBaseLayers(): void {
@@ -124,6 +146,12 @@ export class CommuteMapView {
     zonePane.style.opacity = '0.34'
     zonePane.style.pointerEvents = 'none'
 
+    const estimatePane = this.map.createPane('estimatePane')
+    estimatePane.style.zIndex = '420'
+    estimatePane.style.pointerEvents = 'none'
+    const selectionPane = this.map.createPane('selectionPane')
+    selectionPane.style.zIndex = '430'
+    selectionPane.style.pointerEvents = 'none'
     const markerPane = this.map.getPane('markerPane')
     if (markerPane) {
       markerPane.style.zIndex = '600'
@@ -156,6 +184,60 @@ export class CommuteMapView {
     this.setSelectedStop(null)
   }
 
+  clearPreview(): void {
+    this.estimateLayerGroup.clearLayers()
+    this.selectionLayerGroup.clearLayers()
+  }
+
+  setPreview(
+    workplace: Coordinates,
+    leads: readonly BackwardLead[],
+    rideCapMinutes: number,
+  ): void {
+    this.clearPreview()
+    const bounds = L.latLngBounds([[workplace.latitude, workplace.longitude]])
+    for (const lead of leads) {
+      const point: [number, number] = [
+        lead.stop.point.latitude,
+        lead.stop.point.longitude,
+      ]
+      bounds.extend(point)
+      L.circleMarker(point, {
+        pane: 'estimatePane',
+        renderer: this.estimateRenderer,
+        radius: 4,
+        color: hasTenMinuteMargin(lead.estRideMs, rideCapMinutes)
+          ? '#2459a6'
+          : '#a65c00',
+        weight: 1,
+        fillOpacity: 0.75,
+        interactive: false,
+      }).addTo(this.estimateLayerGroup)
+    }
+    this.map.fitBounds(bounds, {
+      padding: [40, 40],
+      maxZoom: 15,
+      animate: false,
+    })
+  }
+
+  setAreaSelection(point: Coordinates, focus: boolean): void {
+    this.selectionLayerGroup.clearLayers()
+    const centre: [number, number] = [point.latitude, point.longitude]
+    L.circle(centre, {
+      pane: 'selectionPane',
+      radius: AREA_RADIUS_METERS,
+      color: '#343c46',
+      weight: 2,
+      dashArray: '6 4',
+      fill: false,
+      interactive: false,
+    }).addTo(this.selectionLayerGroup)
+    if (focus) {
+      this.map.setView(centre, 15, { animate: false })
+    }
+  }
+
   addQualifyingStop(entry: QualifiedStop): void {
     if (this.stopMarkers.has(entry.stop.id)) {
       return
@@ -165,7 +247,7 @@ export class CommuteMapView {
       entry.stop.point.longitude,
     ]
     L.circle(coords, {
-      radius: ZONE_RADIUS_METERS,
+      radius: AREA_RADIUS_METERS,
       pane: 'commuteZonePane',
       renderer: this.zoneRenderer,
       fillColor: '#1B5E4B',
@@ -223,6 +305,7 @@ export class CommuteMapView {
     this.map.fitBounds(L.latLngBounds(points), {
       padding: [40, 40],
       maxZoom: 15,
+      animate: false,
     })
   }
 }

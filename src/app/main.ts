@@ -1,33 +1,61 @@
-import { filterRailStations, parseStopInventory } from '@lib/inventory.js'
+import { parseStopInventory } from '@lib/inventory.js'
 import { loadCompletedResult } from '@lib/saved-result-store.js'
-import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
 import { normalizeError } from '@utils/guards.js'
+import { checkSelectedArea } from './area-check.js'
+import { applySnapshot } from './area-result.js'
 import {
   collectAppElements,
   getSelectedWorkplaceKind,
+  renderCommuteHint,
   renderInlineError,
-  renderInventorySummary,
-  renderStationOptions,
   setMobileView,
 } from './dom-render.js'
 import { CommuteMapView } from './map-view.js'
 import {
   type AppContext,
   type AppState,
-  applySnapshot,
   handleSearchSubmit,
   handleSignIn,
   handleSignOut,
+  invalidatePreview,
+  refreshAreaStopPicker,
   refreshStopList,
+  selectArea,
   selectStop,
   stopActiveSearch,
   syncAccountUi,
   syncConnectivity,
 } from './search-controller.js'
+import { wireStationAutocomplete } from './station-autocomplete.js'
 
 const wireUiEvents = (ctx: AppContext): void => {
   const { els, mapView, state } = ctx
 
+  renderCommuteHint(els)
+  els.officeStartInput.addEventListener('input', () => renderCommuteHint(els))
+  els.rideCapInput.addEventListener('input', () => renderCommuteHint(els))
+  els.editCommuteButton.addEventListener('click', () => {
+    setMobileView('search')
+    const input =
+      getSelectedWorkplaceKind() === 'station'
+        ? els.stationInput
+        : els.postalInput
+    input.focus()
+  })
+  const invalidateSearchInput = (event: Event): void => {
+    if (event.target !== els.stationInput) invalidatePreview(ctx)
+  }
+  els.searchForm.addEventListener('input', invalidateSearchInput)
+  els.searchForm.addEventListener('change', invalidateSearchInput)
+  els.areaStopFilter.addEventListener('input', () => refreshAreaStopPicker(ctx))
+  els.areaStopSelect.addEventListener('change', () => {
+    const stop = state.inventory?.stops.find(
+      (entry) => entry.id === els.areaStopSelect.value,
+    )
+    if (stop) {
+      selectArea(ctx, stop.point, `${stop.id} ${stop.name}`, true)
+    }
+  })
   for (const radio of document.querySelectorAll<HTMLInputElement>(
     'input[name="workplace-kind"]',
   )) {
@@ -69,6 +97,7 @@ const wireUiEvents = (ctx: AppContext): void => {
         if (target === 'map') {
           mapView.invalidateSize()
         }
+        if (target === 'search') els.searchHeading.focus()
       }
     })
   }
@@ -85,7 +114,12 @@ const wireUiEvents = (ctx: AppContext): void => {
     event.preventDefault()
     void handleSearchSubmit(ctx)
   })
-  els.stopSearchButton.addEventListener('click', () => stopActiveSearch(ctx))
+  for (const button of [els.stopSearchButton, els.stopAreaButton]) {
+    button.addEventListener('click', () => stopActiveSearch(ctx))
+  }
+  for (const button of [els.checkAreaButton, els.checkMoreButton]) {
+    button.addEventListener('click', () => void checkSelectedArea(ctx))
+  }
   window.addEventListener('online', () => syncConnectivity(ctx))
   window.addEventListener('offline', () => syncConnectivity(ctx))
 }
@@ -102,23 +136,38 @@ const bootstrap = async (): Promise<void> => {
   const els = collectAppElements()
   const state: AppState = {
     inventory: null,
+    workplaceStation: null,
     networkText: null,
     account: null,
-    workplace: null,
+    signingIn: false,
     matches: [],
     selectedStopId: null,
     kindFilter: 'all',
     textFilter: '',
-    isSearching: false,
     abortController: null,
+    preview: null,
+    selectedArea: null,
+    areaCheck: null,
   }
 
   let ctx: AppContext | null = null
-  const mapView = new CommuteMapView(els.mapContainer, (stopId) => {
-    if (ctx) {
-      selectStop(ctx, stopId)
-    }
-  })
+  const mapView = new CommuteMapView(
+    els.mapContainer,
+    (stopId) => {
+      if (ctx) {
+        selectStop(ctx, stopId)
+      }
+    },
+    (point) => {
+      if (ctx) {
+        selectArea(
+          ctx,
+          point,
+          `Map point ${point.latitude.toFixed(5)}, ${point.longitude.toFixed(5)}`,
+        )
+      }
+    },
+  )
   ctx = { els, mapView, state }
 
   wireUiEvents(ctx)
@@ -126,8 +175,8 @@ const bootstrap = async (): Promise<void> => {
 
   const saved = loadCompletedResult(window.localStorage)
   if (saved) {
-    applySnapshot(ctx, saved)
     setMobileView('map')
+    applySnapshot(ctx, saved)
   }
 
   if ('serviceWorker' in navigator) {
@@ -142,22 +191,13 @@ const bootstrap = async (): Promise<void> => {
     const inventory = parseStopInventory(stopsText)
     state.inventory = inventory
     state.networkText = networkText
-    renderInventorySummary(els, inventory, getDefaultSearchDate(Date.now()))
-    renderStationOptions(
-      els.stationSelect,
-      filterRailStations(inventory, ''),
-      '',
-    )
-    els.stationFilterInput.addEventListener('input', () => {
-      renderStationOptions(
-        els.stationSelect,
-        filterRailStations(inventory, els.stationFilterInput.value),
-        els.stationSelect.value,
-      )
+    wireStationAutocomplete(els, inventory, (station) => {
+      if (state.workplaceStation?.id === station.id) return
+      state.workplaceStation = station
+      invalidatePreview(ctx)
     })
     syncConnectivity(ctx)
   } catch (error) {
-    els.inventoryBadge.textContent = 'Inventory unavailable'
     renderInlineError(
       els.searchError,
       `Could not load stop inventory: ${normalizeError(error, 'fetch failed').message}`,

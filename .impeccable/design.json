@@ -167,7 +167,7 @@
       }
     ],
     "dos": [
-      "Do keep Search date, Inventory date, and the Keep the app open while searching warning visible without accordions before starting a search.",
+      "Do keep the keep-open notice visible before preview. Omit inventory dates from the interface and show the original search date only alongside verified journey evidence.",
       "Do preserve uniform 500 m catchment opacity using one shared SVG renderer inside commuteZonePane.",
       "Do keep Stops tried and Matching stops visually distinct in tabular figures."
     ],

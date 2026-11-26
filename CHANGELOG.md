@@ -1,7 +1,24 @@
 # Changelog
 
+## 2026-11-27
+
+- Keep the workplace visible on the preview map even when there are no estimated stops.
+- Replace the MRT/LRT workplace dropdown with autocomplete by station name or code, including typo-tolerant suggestions and exact line selection.
+- Open the first verified journey from **Check this area**, then offer **Look for another stop here** when more departures can be checked without moving the 500 m circle.
+- Keep the selected workplace while filtering stations, block duplicate OneMap sign-ins, and leave the saved stop list visible when a workplace lookup fails.
+- Fetch fresh app files when installing an updated offline cache.
+- Sort workplace MRT/LRT options by station code in numeric order (for example, NS1, NS2, NS11).
+
 ## 2026-11-26
 
+- Start with the workplace and live arrival window, connect OneMap inline, and return to the commute from an empty preview. Remove inventory dates from the interface and show the original search date only on verified journey details, including offline.
+- Open mobile previews and saved checks on the map. Select and check a 500 m area from a dock below it, with a stop-name picker and one shared journey card.
+- Keep failed/interrupted neighbourhood probes distinct after exhaustion, preserve workplace proof when filtering station names, reset keyboard selection after map clicks, and end failed worker planning. Save only the successful circle's verified evidence with distinct-stop counters; preserve restored scope through form edits and report non-sensitive offline-storage diagnostics.
+- Continue neighbourhood checks in batches of at most three new planned departures, without repeating checked departures across overlapping areas. Reopen the last successful checked area and its verified journey evidence offline; estimates and unsuccessful checks stay unsaved.
+- Add **Check within 500 m**: verify at most three planned departures, reuse same-search actual boarding evidence and stop normally on the first in-area proof. Show exact journeys outside the map for keyboard/mobile use; distinguish empty estimates, bounded misses, routing/sign-in errors and cancellation. Remove the obsolete global scheduler and its scheduler-only tests; retain qualification-rule tests and the existing offline snapshot loader without writing partial checks.
+- Replace automatic global routing scans with a local, radius-limited estimated preview that pauses before routing. Distinguish ride-cap-margin time bands from qualifying journeys, support map or keyboard/mobile 500 m area selection, clear previews on changed inputs or session, and preserve the existing completed offline map.
+- Limit direct OneMap requests to a straight-line radius based on the ride cap (13.7 km for 30 minutes). Keep qualifying stops outside the radius when an itinerary already proves them.
+- Skip redundant OneMap requests when an itinerary confirms pickup at an intermediate stop and the remaining journey meets the ride cap and arrival window.
 - Save a completed search offline when every stop with a failed routing request later has a confirmed journey. Unresolved failures still leave the previous offline result intact.
 - Keep late bus departures and after-midnight trains eligible for verification. Bind first/last bus times to each visit in route order instead of guessing from nearby stops' clocks.
 - Keep short LRT, MRT and bus journeys eligible when their estimated ride time exceeds the cap. OneMap's actual in-vehicle time decides whether they qualify.

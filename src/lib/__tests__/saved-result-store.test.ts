@@ -62,7 +62,7 @@ const SAMPLE_SNAPSHOT: CompletedSearchSnapshot = {
 }
 
 describe('saved-result-store', () => {
-  it('saves and reloads postal and station snapshots', () => {
+  it('saves and reloads postal, station and checked-area snapshots', () => {
     const storage = createMemoryStorage()
     saveCompletedResult(storage, SAMPLE_SNAPSHOT)
     expect(loadCompletedResult(storage)).toEqual(SAMPLE_SNAPSHOT)
@@ -78,6 +78,16 @@ describe('saved-result-store', () => {
     }
     saveCompletedResult(storage, stationSnapshot)
     expect(loadCompletedResult(storage)).toEqual(stationSnapshot)
+
+    const areaSnapshot: CompletedSearchSnapshot = {
+      ...SAMPLE_SNAPSHOT,
+      checkedArea: {
+        centre: { latitude: 1.403_69, longitude: 103.902_26 },
+        proofStopId: '65009',
+      },
+    }
+    saveCompletedResult(storage, areaSnapshot)
+    expect(loadCompletedResult(storage)).toEqual(areaSnapshot)
   })
 
   it('returns null safely when storage is empty, invalid JSON, or invalid structure', () => {
@@ -91,6 +101,13 @@ describe('saved-result-store', () => {
       { version: 99 },
       { ...SAMPLE_SNAPSHOT, workplace: { kind: 'postal' } },
       { ...SAMPLE_SNAPSHOT, constraints: { searchDate: '2026-06-02' } },
+      {
+        ...SAMPLE_SNAPSHOT,
+        checkedArea: {
+          centre: { latitude: 1.403_69, longitude: 103.902_26 },
+          proofStopId: 'unknown-stop',
+        },
+      },
       {
         ...SAMPLE_SNAPSHOT,
         matches: [{ stop: { id: '1' }, journey: { stopId: '1' } }],

@@ -155,6 +155,23 @@ const parseQualifiedStop = (raw: unknown): QualifiedStop | null => {
   return stop !== null && journey !== null ? { stop, journey } : null
 }
 
+const parseCheckedArea = (
+  raw: unknown,
+  matches: readonly QualifiedStop[],
+): CompletedSearchSnapshot['checkedArea'] | null => {
+  if (raw === undefined) return undefined
+  if (!isRecord(raw)) return null
+  const centre = parseCoordinates(raw['centre'])
+  const proofStopId = raw['proofStopId']
+  if (
+    centre === null ||
+    !isNonEmptyString(proofStopId) ||
+    !matches.some((entry) => entry.stop.id === proofStopId)
+  )
+    return null
+  return { centre, proofStopId }
+}
+
 const parseSnapshot = (raw: unknown): CompletedSearchSnapshot | null => {
   if (!isRecord(raw) || raw['version'] !== 1) {
     return null
@@ -184,6 +201,8 @@ const parseSnapshot = (raw: unknown): CompletedSearchSnapshot | null => {
     }
     matches.push(parsed)
   }
+  const checkedArea = parseCheckedArea(raw['checkedArea'], matches)
+  if (checkedArea === null) return null
   return {
     version: 1,
     completedAtIso,
@@ -193,6 +212,7 @@ const parseSnapshot = (raw: unknown): CompletedSearchSnapshot | null => {
     triedCount,
     totalCount,
     matches,
+    ...(checkedArea ? { checkedArea } : {}),
   }
 }
 

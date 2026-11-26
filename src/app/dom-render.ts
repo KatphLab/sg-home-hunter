@@ -1,9 +1,7 @@
 import type {
   OneMapAccount,
   QualifiedStop,
-  SearchResultStatus,
   Stop,
-  StopInventory,
   Workplace,
 } from '@lib/commute-types.js'
 import {
@@ -35,7 +33,7 @@ const requireElementOfType = <T extends HTMLElement>(
 
 export interface AppElements {
   readonly connectivityBadge: HTMLElement
-  readonly inventoryBadge: HTMLElement
+  readonly accountPanel: HTMLElement
   readonly offlineBanner: HTMLElement
   readonly accountStatusPill: HTMLElement
   readonly signinForm: HTMLFormElement
@@ -46,16 +44,18 @@ export interface AppElements {
   readonly signedInEmail: HTMLElement
   readonly signoutButton: HTMLButtonElement
   readonly authError: HTMLElement
+  readonly searchHeading: HTMLElement
   readonly searchForm: HTMLFormElement
   readonly postalGroup: HTMLElement
   readonly postalInput: HTMLInputElement
   readonly stationGroup: HTMLElement
-  readonly stationFilterInput: HTMLInputElement
-  readonly stationSelect: HTMLSelectElement
+  readonly stationInput: HTMLInputElement
+  readonly stationSuggestions: HTMLElement
+  readonly stationSearchStatus: HTMLElement
   readonly officeStartInput: HTMLInputElement
   readonly rideCapInput: HTMLInputElement
-  readonly plannedSearchDate: HTMLElement
-  readonly plannedInventoryDate: HTMLElement
+  readonly commuteHint: HTMLElement
+  readonly editCommuteButton: HTMLButtonElement
   readonly startSearchButton: HTMLButtonElement
   readonly stopSearchButton: HTMLButtonElement
   readonly searchError: HTMLElement
@@ -69,6 +69,7 @@ export interface AppElements {
   readonly qualifyingStopsList: HTMLElement
   readonly mapContainer: HTMLElement
   readonly selectedStopCard: HTMLElement
+  readonly selectedStopAction: HTMLElement
   readonly selectedStopId: HTMLElement
   readonly selectedStopName: HTMLElement
   readonly selectedStopKind: HTMLElement
@@ -76,14 +77,26 @@ export interface AppElements {
   readonly selectedArrivalTime: HTMLElement
   readonly selectedRideDuration: HTMLElement
   readonly selectedServices: HTMLElement
+  readonly selectedJourneyDate: HTMLTimeElement
   readonly selectedJourneyDisclaimer: HTMLElement
   readonly closeJourneyCardButton: HTMLButtonElement
   readonly mobileStopsCount: HTMLElement
+  readonly previewPanel: HTMLElement
+  readonly previewHeading: HTMLElement
+  readonly previewSummary: HTMLElement
+  readonly areaPicker: HTMLDetailsElement
+  readonly areaStopFilter: HTMLInputElement
+  readonly areaStopSelect: HTMLSelectElement
+  readonly areaSummary: HTMLElement
+  readonly checkAreaButton: HTMLButtonElement
+  readonly checkMoreButton: HTMLButtonElement
+  readonly stopAreaButton: HTMLButtonElement
+  readonly areaResult: HTMLElement
 }
 
 export const collectAppElements = (): AppElements => ({
   connectivityBadge: requireElement('connectivity-badge'),
-  inventoryBadge: requireElement('inventory-badge'),
+  accountPanel: requireElement('section-account'),
   offlineBanner: requireElement('offline-banner'),
   accountStatusPill: requireElement('account-status-pill'),
   signinForm: requireElementOfType('signin-form', HTMLFormElement),
@@ -94,22 +107,24 @@ export const collectAppElements = (): AppElements => ({
   signedInEmail: requireElement('signed-in-email'),
   signoutButton: requireElementOfType('signout-btn', HTMLButtonElement),
   authError: requireElement('auth-error'),
+  searchHeading: requireElement('heading-search'),
   searchForm: requireElementOfType('search-form', HTMLFormElement),
   postalGroup: requireElement('postal-field-group'),
   postalInput: requireElementOfType('postal-input', HTMLInputElement),
   stationGroup: requireElement('station-field-group'),
-  stationFilterInput: requireElementOfType(
-    'station-filter-input',
-    HTMLInputElement,
-  ),
-  stationSelect: requireElementOfType('station-select', HTMLSelectElement),
+  stationInput: requireElementOfType('station-input', HTMLInputElement),
+  stationSuggestions: requireElement('station-suggestions'),
+  stationSearchStatus: requireElement('station-search-status'),
   officeStartInput: requireElementOfType(
     'office-start-input',
     HTMLInputElement,
   ),
   rideCapInput: requireElementOfType('ride-cap-input', HTMLInputElement),
-  plannedSearchDate: requireElement('planned-search-date'),
-  plannedInventoryDate: requireElement('planned-inventory-date'),
+  commuteHint: requireElement('commute-hint'),
+  editCommuteButton: requireElementOfType(
+    'edit-commute-btn',
+    HTMLButtonElement,
+  ),
   startSearchButton: requireElementOfType(
     'start-search-btn',
     HTMLButtonElement,
@@ -129,6 +144,7 @@ export const collectAppElements = (): AppElements => ({
   qualifyingStopsList: requireElement('qualifying-stops-list'),
   mapContainer: requireElement('map'),
   selectedStopCard: requireElement('selected-stop-card'),
+  selectedStopAction: requireElement('selected-stop-action'),
   selectedStopId: requireElement('selected-stop-id'),
   selectedStopName: requireElement('selected-stop-name'),
   selectedStopKind: requireElement('selected-stop-kind'),
@@ -136,18 +152,32 @@ export const collectAppElements = (): AppElements => ({
   selectedArrivalTime: requireElement('selected-arrival-time'),
   selectedRideDuration: requireElement('selected-ride-duration'),
   selectedServices: requireElement('selected-services'),
+  selectedJourneyDate: requireElementOfType(
+    'selected-journey-date',
+    HTMLTimeElement,
+  ),
   selectedJourneyDisclaimer: requireElement('selected-journey-disclaimer'),
   closeJourneyCardButton: requireElementOfType(
     'close-journey-card',
     HTMLButtonElement,
   ),
   mobileStopsCount: requireElement('mobile-stops-count'),
+  previewPanel: requireElement('section-preview'),
+  previewHeading: requireElement('heading-preview'),
+  previewSummary: requireElement('preview-summary'),
+  areaPicker: requireElementOfType('area-picker', HTMLDetailsElement),
+  areaStopFilter: requireElementOfType('area-stop-filter', HTMLInputElement),
+  areaStopSelect: requireElementOfType('area-stop-select', HTMLSelectElement),
+  areaSummary: requireElement('area-summary'),
+  checkAreaButton: requireElementOfType('check-area-btn', HTMLButtonElement),
+  checkMoreButton: requireElementOfType('check-more-btn', HTMLButtonElement),
+  stopAreaButton: requireElementOfType('stop-area-btn', HTMLButtonElement),
+  areaResult: requireElement('area-result'),
 })
 
 export const renderStationOptions = (
   select: HTMLSelectElement,
   stations: readonly Stop[],
-  previousId: string,
 ): void => {
   const options: HTMLOptionElement[] = []
   for (const station of stations) {
@@ -157,68 +187,48 @@ export const renderStationOptions = (
     options.push(opt)
   }
   select.replaceChildren(...options)
-  if (
-    previousId.length > 0 &&
-    stations.some((station) => station.id === previousId)
-  ) {
-    select.value = previousId
-  }
 }
 
-export const renderInventorySummary = (
-  els: AppElements,
-  inventory: StopInventory,
-  defaultSearchDate: string,
-): void => {
-  const countText = inventory.stops.length.toLocaleString('en-SG')
-  els.inventoryBadge.textContent = `Inventory: ${inventory.inventoryDate} (${countText} stops)`
-  els.plannedInventoryDate.textContent = `${inventory.inventoryDate} (${countText} stops)`
-  els.plannedSearchDate.textContent = defaultSearchDate
+export const renderCommuteHint = (els: AppElements): void => {
+  const startMs = els.officeStartInput.valueAsNumber
+  const arrival = Number.isFinite(startMs)
+    ? `Arrive ${new Date(Math.max(0, startMs - 900_000)).toISOString().slice(11, 16)}–${els.officeStartInput.value}. `
+    : ''
+  const cap = els.rideCapInput.validity.valid
+    ? `Your ${els.rideCapInput.value}-minute ride cap`
+    : 'Ride cap'
+  els.commuteHint.textContent = `${arrival}${cap} excludes walking and waiting.`
 }
+
+const resultBadges = {
+  idle: ['No search yet', 'muted'],
+  planning: ['Planning departures', 'running'],
+  preview: ['Estimated preview', 'muted'],
+  confirmed: ['Area confirmed', 'muted'],
+  saved: ['Saved offline result', 'ok'],
+  savedArea: ['Saved offline area check', 'ok'],
+} as const
 
 export const renderStatusBadge = (
   tag: HTMLElement,
-  mode: SearchResultStatus | 'saved' | 'idle' | 'planning',
-  passNumber?: number,
-  totalPasses?: number,
+  mode: keyof typeof resultBadges,
 ): void => {
-  const labelMap: Readonly<Record<typeof mode, string>> = {
-    idle: 'No search yet',
-    planning: 'Planning departures',
-    running: `Searching — Pass ${String(passNumber ?? 1)} of ${String(totalPasses ?? 1)}`,
-    partial: 'Partial result',
-    completed: 'Completed',
-    saved: 'Saved offline result',
-  }
-  const classMap: Readonly<Record<typeof mode, string>> = {
-    idle: 'status-tag status-tag--muted',
-    planning: 'status-tag status-tag--running',
-    running: 'status-tag status-tag--running',
-    partial: 'status-tag status-tag--partial',
-    completed: 'status-tag status-tag--ok',
-    saved: 'status-tag status-tag--ok',
-  }
-  tag.textContent = labelMap[mode]
-  tag.className = classMap[mode]
+  const [label, tone] = resultBadges[mode]
+  tag.textContent = label
+  tag.className = `status-tag status-tag--${tone}`
 }
 
 export const renderConstraintsSummary = (
   els: AppElements,
-  workplace: Workplace | null,
-  searchDate: string,
+  workplace: Workplace,
   officeStart: string,
   rideCapMinutes: number,
 ): void => {
-  if (!workplace) {
-    els.activeConstraintsSummary.textContent =
-      'Run a search to map 500 m housing-search zones across Singapore.'
-    return
-  }
   const target =
     workplace.kind === 'postal'
       ? `Postal ${workplace.postalCode} (${workplace.label})`
       : `${workplace.stationId} (${workplace.label})`
-  els.activeConstraintsSummary.textContent = `${target} · Date ${searchDate} · Start ${officeStart} · Ride cap ${String(rideCapMinutes)} min`
+  els.activeConstraintsSummary.textContent = `${target} · Start ${officeStart} · Ride cap ${String(rideCapMinutes)} min`
 }
 
 const createStopListRow = (
@@ -288,6 +298,13 @@ export const renderQualifyingStopsList = (
   els.qualifyingStopsList.replaceChildren(...rows)
 }
 
+const checkedDateFormat = new Intl.DateTimeFormat('en-SG', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  timeZone: 'UTC',
+})
+
 export const renderSelectedStopCard = (
   els: AppElements,
   entry: QualifiedStop | null,
@@ -303,6 +320,9 @@ export const renderSelectedStopCard = (
     entry.stop.kind === 'rail'
       ? 'stop-plaque stop-plaque--rail tabular'
       : 'stop-plaque tabular'
+  els.selectedStopAction.textContent = entry.journey.isAtDestination
+    ? 'At workplace:'
+    : 'Board at'
   els.selectedStopName.textContent = entry.stop.name
   els.selectedStopKind.textContent =
     entry.stop.kind === 'rail' ? 'MRT / LRT station' : 'Bus stop'
@@ -310,11 +330,21 @@ export const renderSelectedStopCard = (
   els.selectedArrivalTime.textContent = times.arrival
   els.selectedRideDuration.textContent = formatRideMinutes(entry.journey.rideMs)
   els.selectedServices.textContent = formatServiceChain(entry.journey)
-  els.selectedJourneyDisclaimer.textContent = `One qualifying journey for ${entry.journey.searchDate} — not the fastest, latest or most frequent service.`
+  els.selectedJourneyDate.dateTime = entry.journey.searchDate
+  els.selectedJourneyDate.textContent = `Checked for ${checkedDateFormat.format(new Date(entry.journey.searchDate))}`
+  els.selectedJourneyDisclaimer.textContent =
+    'One qualifying journey, not necessarily the fastest, latest or most frequent. Arrival includes any final walk.'
 }
 
 export const setMobileView = (view: 'search' | 'map' | 'stops'): void => {
   document.body.dataset['mobileView'] = view
+  for (const tab of document.querySelectorAll<HTMLElement>(
+    '[data-mobile-tab]',
+  )) {
+    if (tab.dataset['mobileTab'] === view)
+      tab.setAttribute('aria-current', 'true')
+    else tab.removeAttribute('aria-current')
+  }
 }
 
 export const getSelectedWorkplaceKind = (): 'postal' | 'station' => {
@@ -328,13 +358,14 @@ export const renderConnectivityState = (
   els: AppElements,
   online: boolean,
   canStartSearch: boolean,
+  signingIn: boolean,
 ): void => {
   els.offlineBanner.hidden = online
   els.connectivityBadge.textContent = online ? 'Online' : 'Offline'
   els.connectivityBadge.className = online
     ? 'status-tag status-tag--online'
     : 'status-tag status-tag--offline'
-  els.signinButton.disabled = !online
+  els.signinButton.disabled = !online || signingIn
   els.startSearchButton.disabled = !canStartSearch
 }
 
@@ -343,6 +374,17 @@ export const renderAccountState = (
   account: OneMapAccount | null,
 ): void => {
   const signedIn = account !== null
+  els.accountPanel.hidden = !signedIn
+  els.startSearchButton.textContent = signedIn
+    ? 'Preview estimated stops'
+    : 'Connect OneMap to preview'
+  if (signedIn) {
+    els.startSearchButton.removeAttribute('aria-expanded')
+    els.startSearchButton.removeAttribute('aria-controls')
+  } else {
+    els.startSearchButton.setAttribute('aria-controls', els.accountPanel.id)
+    els.startSearchButton.setAttribute('aria-expanded', 'false')
+  }
   els.signinForm.hidden = signedIn
   els.signedInBar.hidden = !signedIn
   if (account) {

@@ -120,7 +120,7 @@ The palette is restrained and daylight-calibrated: botanical green owns the work
 ### Primary
 
 - **Botanical Green** (`#1b5e4b`): Application header bar, primary search trigger, active filter chips, MRT/LRT stop plaques, and the uniform-opacity 500 m housing-search zone overlay.
-- **Botanical Deep** (`#134436`): Header status pills (`Online`, inventory count) and primary button hover fill, ensuring high contrast against white text.
+- **Botanical Deep** (`#134436`): Online status and primary button hover fill, ensuring high contrast against white text.
 - **Botanical Tint** (`#e3efe9`): Active stop row selection, active mobile tab highlight, and text selection highlight.
 
 ### Secondary
@@ -166,7 +166,7 @@ The palette is restrained and daylight-calibrated: botanical green owns the work
 
 Desktop (`> 900px`) uses a locked full-viewport flex column (`100dvh`, `overflow: hidden`) with a compact header bar above a two-column workspace: a scrollable `400px` left civic rail and a full-height interactive Leaflet map stage.
 
-Mobile (`<= 900px`) switches to a map-first single-pane workspace paired with a persistent bottom navigation bar (`Search` | `Map` | `Stops (N)`). Opening the app with a saved completed search automatically activates the `Map` view so house hunters offline at viewings land directly on the housing-search zone, with the legend tucked top-right away from zoom controls and the journey card docked above the tab bar.
+Mobile (`<= 900px`) starts with the workplace form and opens the map after preview. Restored checks open directly on the map with their verified journey, above the persistent bottom navigation.
 
 ## Elevation & Depth
 
@@ -189,7 +189,7 @@ Elevation follows **one-method separation**: docked rail panels and inputs use f
 ### Buttons
 
 - **Shape:** Slightly rounded architectural rectangle (`6px` radius).
-- **Primary (`Start search`):** Botanical green (`#1b5e4b`) with white text (`8px 14px` padding), darkening to `#134436` on hover and `0.5` opacity when offline or disconnected.
+- **Primary search action:** `Connect OneMap to preview` opens inline sign-in; `Preview estimated stops` takes its place once connected. Both use botanical green with white text and are disabled while unavailable.
 - **Secondary (`Connect OneMap`):** Pure white fill with `1px` botanical green border and `#1b5e4b` text; fills with `#e3efe9` on hover.
 - **Danger (`Stop search`):** Civic vermilion (`#c83e2b`) with white text, shown only while a search is running.
 - **Ghost (`Disconnect`, `Close`):** Transparent fill with `1px solid #cfd5d0` rule.
@@ -214,7 +214,7 @@ Elevation follows **one-method separation**: docked rail panels and inputs use f
 
 ### Do:
 
-- **Do** keep `Search date`, `Inventory date`, and the `Keep the app open while searching` warning visible without accordions before starting a search.
+- **Do** keep the keep-open notice visible before preview. Omit inventory dates from the interface and show the original search date only alongside verified journey evidence.
 - **Do** preserve uniform 500 m catchment opacity using one shared SVG renderer inside `commuteZonePane`.
 - **Do** keep `Stops tried` and `Matching stops` visually distinct in tabular figures.
 
