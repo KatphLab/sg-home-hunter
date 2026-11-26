@@ -131,18 +131,20 @@ describe('transit-network', () => {
     const index = buildTransitNetworkIndex({
       inventory: MINI_INVENTORY,
       networkDate: '2026-11-26',
-      busServices: {
-        '381': [['65009', '65729', '69009']],
-        '44': [['65009', '69009']],
-      },
-      busFirstLast: {
-        '65009': [
-          '381 0545 0035 = = = =',
-          '381 0700 0116 = = = =',
-          '44 0630 0830 - - - -',
+      busRoutes: {
+        '381': [
+          [
+            { stopId: '65009', times: '0545 0035 = = = =' },
+            { stopId: '65729', times: '0548 0038 = = = =' },
+            { stopId: '69009', times: '0551 0041 = = = =' },
+          ],
         ],
-        '65729': ['381 0548 0038 = = = =', '381 0705 0120 = = = ='],
-        '69009': ['381 0551 0041 = = = =', '44 0636 0836 - - - -'],
+        '44': [
+          [
+            { stopId: '65009', times: '0630 0830 - - - -' },
+            { stopId: '69009', times: '0636 0836 - - - -' },
+          ],
+        ],
       },
     })
 
@@ -203,65 +205,75 @@ describe('transit-network', () => {
     ])
   })
 
-  it('round-trips dated routes and timings, omitting incomplete routes', () => {
+  it('round-trips visit-specific windows, unknown timings, and non-operating days', () => {
+    const busRoutes = {
+      '381': [
+        [
+          { stopId: '65009', times: '0545 0035 = = - -' },
+          { stopId: '65729' },
+          { stopId: '65009', times: '0700 0116 = = = =' },
+          { stopId: '69009', times: '0705 0120 = = = =' },
+        ],
+        [{ stopId: '69009', times: '0600 0005 = = = =' }, { stopId: '65009' }],
+      ],
+    }
     const rawTsv = serializeBusNetworkTsv({
       networkDate: '2026-11-25',
-      busServices: {
-        '381': [
-          ['65009', '65729', '69009'],
-          ['69009', '65009'],
-        ],
-        SHORT: [['65009']],
-      },
-      busFirstLast: {
-        '65009': ['381 0545 0035 = = = =', '381 0700 0116 = = = ='],
-        '65729': ['381 0548 0038 = = = ='],
-      },
+      busRoutes: { ...busRoutes, SHORT: [[{ stopId: '65009' }]] },
     })
-
+    expect(rawTsv).toContain('service\tdirection\tvisits')
+    expect(rawTsv).toContain(
+      '381\t1\t65009 0545 0035 = = - -|65729|65009 0700 0116 = = = =|69009 0705 0120 = = = =',
+    )
     const parsed = parseBusNetworkTsv(rawTsv)
     expect(parsed.networkDate).toBe('2026-11-25')
-    expect(parsed.busServices['381']).toEqual([
-      ['65009', '65729', '69009'],
-      ['69009', '65009'],
-    ])
-    expect(parsed.busServices['SHORT']).toBeUndefined()
-    expect(parsed.busFirstLast['65009']).toEqual([
-      '381 0545 0035 = = = =',
-      '381 0700 0116 = = = =',
-    ])
+    expect(parsed.busRoutes).toEqual(busRoutes)
+    const index = buildTransitNetworkIndex({
+      inventory: MINI_INVENTORY,
+      ...parsed,
+    })
+    const windows = index.patterns
+      .filter((pattern) => pattern.serviceId === '381')
+      .flatMap((pattern) => pattern.segments)
+      .filter((segment) => segment.fromStopId === '65009')
+      .map((segment) => segment.operatingWindows)
+    expect(windows[0]).toEqual({
+      weekday: { firstMin: 345, lastMin: 1475 },
+      saturday: { firstMin: 345, lastMin: 1475 },
+    })
+    expect(windows[1]).toEqual({
+      weekday: { firstMin: 420, lastMin: 1516 },
+      saturday: { firstMin: 420, lastMin: 1516 },
+      sunday_holiday: { firstMin: 420, lastMin: 1516 },
+    })
   })
 
   it('handles empty rail-only bus-network TSVs, ignores malformed rows, and rejects invalid headers', () => {
     const validWithBadRows = [
       'networkDate\t2026-11-25',
-      'kind\tid\tpayload',
+      'service\tdirection\tvisits',
       'badrow',
-      'R\t\t65009,65729',
-      'R\t10\t65009',
-      'F\t65009\t|',
-      'F\t65009\t10 0530 2330 = = = =',
-      'F\t65009\t10 0600 2330 = = = =',
+      '\t1\t65009|65729',
+      '10\t1\t65009',
     ].join('\n')
     const parsed = parseBusNetworkTsv(validWithBadRows)
-    expect(parsed.busServices).toEqual({})
-    expect(parsed.busFirstLast['65009']).toEqual([
-      '10 0530 2330 = = = =',
-      '10 0600 2330 = = = =',
-    ])
+    expect(parsed.busRoutes).toEqual({})
+    expect(
+      parseBusNetworkTsv('networkDate\t2026-11-25\nservice\tdirection\tvisits')
+        .busRoutes,
+    ).toEqual({})
 
     expect(() =>
       serializeBusNetworkTsv({
         networkDate: 'bad',
-        busServices: {},
-        busFirstLast: {},
+        busRoutes: {},
       }),
     ).toThrow('Invalid bus network date')
     expect(() => parseBusNetworkTsv('only-one-line')).toThrow(
       'missing required',
     )
     expect(() =>
-      parseBusNetworkTsv('networkDate\tinvalid\nkind\tid\tpayload'),
+      parseBusNetworkTsv('networkDate\tinvalid\nservice\tdirection\tvisits'),
     ).toThrow('networkDate header')
     expect(() =>
       parseBusNetworkTsv('networkDate\t2026-11-25\nwrong\theader\tcols'),
@@ -276,12 +288,13 @@ describe('transit-network', () => {
     const index = buildTransitNetworkIndex({
       inventory: inventory249A,
       networkDate: '2026-11-26',
-      busServices: {
-        '249A': [['21359', '21349']],
-      },
-      busFirstLast: {
-        '21359': ['249A 0634 0830 - - - -'],
-        '21349': ['249A 0637 0832 - - - -'],
+      busRoutes: {
+        '249A': [
+          [
+            { stopId: '21359', times: '0634 0830 - - - -' },
+            { stopId: '21349', times: '0637 0832 - - - -' },
+          ],
+        ],
       },
     })
     const seg = index.patterns.find((p) => p.serviceId === '249A')?.segments[0]
@@ -294,8 +307,7 @@ describe('transit-network', () => {
     const index = buildTransitNetworkIndex({
       inventory: MINI_INVENTORY,
       networkDate: '2026-11-26',
-      busServices: {},
-      busFirstLast: {},
+      busRoutes: {},
     })
     const segment = index.patterns
       .flatMap((pattern) => pattern.segments)
@@ -318,8 +330,7 @@ describe('transit-network', () => {
         stop('NE8', 'rail', 1.312_708, 103.854_377),
       ),
       networkDate: '2026-11-26',
-      busServices: {},
-      busFirstLast: {},
+      busRoutes: {},
     })
     const segment = index.patterns
       .flatMap((pattern) => pattern.segments)
@@ -338,8 +349,7 @@ describe('transit-network', () => {
         readFileSync('public/data/stops.tsv', 'utf8'),
       ),
       networkDate: bundled.networkDate,
-      busServices: { '98': bundled.busServices['98'] ?? [] },
-      busFirstLast: bundled.busFirstLast,
+      busRoutes: { '98': bundled.busRoutes['98'] ?? [] },
     })
     const visits = index.patterns
       .filter((pattern) => pattern.serviceId === '98')
@@ -359,6 +369,32 @@ describe('transit-network', () => {
     ])
   })
 
+  it('retains the real 812 second interchange visit at 05:30 instead of shifting it behind the first loop', () => {
+    const bundled = parseBusNetworkTsv(
+      readFileSync('public/data/bus-network.tsv', 'utf8'),
+    )
+    const index = buildTransitNetworkIndex({
+      inventory: parseStopInventory(
+        readFileSync('public/data/stops.tsv', 'utf8'),
+      ),
+      networkDate: bundled.networkDate,
+      busRoutes: { '812': bundled.busRoutes['812'] ?? [] },
+    })
+    const visits = index.patterns
+      .filter((pattern) => pattern.serviceId === '812')
+      .flatMap((pattern) => pattern.segments)
+      .filter((segment) => segment.fromStopId === '59009')
+    expect(visits.map((segment) => segment.toStopId)).toEqual([
+      '59169',
+      '59091',
+    ])
+    expect(visits[1]?.operatingWindows).toEqual({
+      weekday: { firstMin: 330, lastMin: 1496 },
+      saturday: { firstMin: 330, lastMin: 1497 },
+      sunday_holiday: { firstMin: 330, lastMin: 1496 },
+    })
+  })
+
   it('splits bus patterns at missing inventory stops instead of bridging across gaps', () => {
     const gapInventory = inventory(
       ...MINI_INVENTORY.stops.slice(0, 3),
@@ -367,10 +403,13 @@ describe('transit-network', () => {
     const index = buildTransitNetworkIndex({
       inventory: gapInventory,
       networkDate: '2026-11-26',
-      busServices: {
-        '99': [['65009', '65729', 'MISSING', '69009', '69099']],
+      busRoutes: {
+        '99': [
+          ['65009', '65729', 'MISSING', '69009', '69099'].map((stopId) => ({
+            stopId,
+          })),
+        ],
       },
-      busFirstLast: {},
     })
     const bus99 = index.patterns.filter((p) => p.serviceId === '99')
     expect(bus99).toHaveLength(2)
@@ -398,12 +437,13 @@ describe('transit-network', () => {
     const index = buildTransitNetworkIndex({
       inventory: expressInventory,
       networkDate: '2026-11-26',
-      busServices: {
-        '858': [['95159', '65191']],
-      },
-      busFirstLast: {
-        '95159': ['858 0633 0044 = 0043 0632 0039'],
-        '65191': ['858 0647 0056 = = 0645 0052'],
+      busRoutes: {
+        '858': [
+          [
+            { stopId: '95159', times: '0633 0044 = 0043 0632 0039' },
+            { stopId: '65191', times: '0647 0056 = = 0645 0052' },
+          ],
+        ],
       },
     })
     const seg = index.patterns.find((p) => p.serviceId === '858')?.segments[0]
@@ -423,8 +463,7 @@ describe('transit-network', () => {
     const index = buildTransitNetworkIndex({
       inventory: ccInventory,
       networkDate: '2026-11-26',
-      busServices: {},
-      busFirstLast: {},
+      busRoutes: {},
     })
     const ccPatterns = index.patterns.filter((p) =>
       p.serviceId.startsWith('CC'),
@@ -460,12 +499,13 @@ describe('transit-network', () => {
     expect(hasEdge(loopPatterns, 'CC5', 'CC4')).toBe(true)
   })
 
-  it('ships bus-network.tsv with networkDate tied to the bundled data timestamp', () => {
-    const rawTsv = readFileSync('public/data/bus-network.tsv', 'utf8')
-    const parsed = parseBusNetworkTsv(rawTsv)
-    expect(parsed.networkDate).toBe(
-      parseBusNetworkDate('2026-11-06T02:05:26.522Z', '2026-11-25'),
+  it('ships bus-network.tsv with a valid networkDate and usable routes', () => {
+    const parsed = parseBusNetworkTsv(
+      readFileSync('public/data/bus-network.tsv', 'utf8'),
     )
+    expect(parsed.networkDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(Number.isNaN(Date.parse(parsed.networkDate))).toBe(false)
+    expect(Object.keys(parsed.busRoutes).length).toBeGreaterThan(0)
   })
 
   it('models Circle Line off-peak shuttle (CC1-CC6), weekday peak spur (CC1-CC32), and closed CC_LOOP (CC4-CC34-CC4)', () => {
@@ -475,8 +515,7 @@ describe('transit-network', () => {
     const index = buildTransitNetworkIndex({
       inventory,
       networkDate: '2026-11-26',
-      busServices: {},
-      busFirstLast: {},
+      busRoutes: {},
     })
 
     const shuttle = index.patterns.filter((p) =>

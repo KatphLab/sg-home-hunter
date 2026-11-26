@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test'
+import { planBackwardLeads } from '@lib/backward-planner.js'
 import {
   type RunBackwardSearchOptions,
   runBackwardCommuteSearch,
@@ -6,6 +7,7 @@ import {
 import type { Stop } from '@lib/commute-types.js'
 import { OneMapAuthError } from '@lib/onemap-client.js'
 import { parseSingaporeDateTimeMs } from '@lib/singapore-calendar.js'
+import { buildTransitNetworkIndex } from '@lib/transit-network.js'
 
 const searchDate = '2026-11-26'
 const point = { latitude: 1.404, longitude: 103.902 }
@@ -58,6 +60,64 @@ const bus = (stop: Stop, board: string, alight: string) => ({
 })
 
 describe('backward-search verification', () => {
+  it('verifies a one-minute LRT ride even when the travel estimate exceeds the cap', async () => {
+    const rumbia = {
+      ...stop('SE2', 'rail'),
+      point: { latitude: 1.391_509, longitude: 103.905_937 },
+    }
+    const workplace = {
+      kind: 'station' as const,
+      stationId: 'SE1',
+      label: 'Compassvale',
+      point: { latitude: 1.394_518, longitude: 103.900_435 },
+    }
+    const inventory = {
+      inventoryDate: searchDate,
+      stops: [
+        rumbia,
+        { ...stop('SE1', 'rail'), point: workplace.point },
+        {
+          ...stop('SE3', 'rail'),
+          point: { latitude: 1.388_029, longitude: 103.905_458 },
+        },
+      ],
+    }
+    const constraints = { searchDate, officeStart: '09:00', rideCapMinutes: 1 }
+    const networkIndex = buildTransitNetworkIndex({
+      inventory,
+      networkDate: searchDate,
+      busRoutes: {},
+    })
+    const result = await verify({
+      inventory,
+      workplace,
+      constraints,
+      plan: planBackwardLeads({
+        inventory,
+        networkIndex,
+        workplace,
+        constraints,
+      }),
+      routeStop: (from, departure) => {
+        // An early probe returns the next train, not a train held until office start.
+        const startTime = Date.parse(`${searchDate}T${departure}+08:00`)
+        const leg = {
+          from: { stopCode: from.id },
+          startTime,
+          endTime: startTime + 60_000,
+          mode: 'TRAM',
+          routeShortName: 'Sengkang LRT',
+        }
+        return Promise.resolve([
+          { startTime: leg.startTime, endTime: leg.endTime, legs: [leg] },
+        ])
+      },
+    })
+    expect(
+      result.matches.find((entry) => entry.stop.id === 'SE2')?.journey.rideMs,
+    ).toBe(60_000)
+  })
+
   it('reuses a confirmed transfer even when the whole ride exceeds the cap', async () => {
     const calls: string[] = []
     const result = await verify({

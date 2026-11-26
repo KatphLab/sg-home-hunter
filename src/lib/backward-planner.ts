@@ -747,32 +747,28 @@ const areIntervalsDisjoint = (a: BackwardLabel, b: BackwardLabel): boolean =>
 
 const selectDistinctWindowAnchors = (
   ordered: readonly BackwardLabel[],
-  rideCapMs: number,
   maxProbesPerStop: number,
 ): readonly BackwardLabel[] => {
   const primary = ordered[0]
   if (!primary) {
     return []
   }
-  const primaryEstOk = primary.estRideMs <= rideCapMs
   const anchors: BackwardLabel[] = [primary]
   for (let i = 1; i < ordered.length; i += 1) {
     if (anchors.length >= maxProbesPerStop) {
       break
     }
     const label = ordered[i]
-    if (!label || (primaryEstOk && label.estRideMs > rideCapMs)) {
+    if (!label) {
       continue
     }
-    // Keep distinct service windows. Inside overlapping windows, don't spend
-    // a better journey's brackets on a longer transfer chain or a worse
-    // over-cap estimate; split them between comparably ranked departures.
+    // Spend probes on distinct departure times before bracketing one time.
+    // This also matters when every ride estimate is over the cap.
     if (
       anchors.every(
         (anchor) =>
           areIntervalsDisjoint(label, anchor) ||
-          (primaryEstOk &&
-            label.transfers === anchor.transfers &&
+          (label.transfers === anchor.transfers &&
             Math.abs(label.estClockMs - anchor.estClockMs) >
               2 * BRACKET_OFFSET_MS),
       )
@@ -827,11 +823,7 @@ const buildCandidateDepartures = (
   maxProbesPerStop: number,
 ): readonly string[] => {
   const ordered = orderLabelsForProbe(labels, ctx.rideCapMs)
-  const anchors = selectDistinctWindowAnchors(
-    ordered,
-    ctx.rideCapMs,
-    maxProbesPerStop,
-  )
+  const anchors = selectDistinctWindowAnchors(ordered, maxProbesPerStop)
   const bracketPlans = anchors.map((anchor) =>
     getBracketAnchorAndOffsets(anchor, ctx),
   )

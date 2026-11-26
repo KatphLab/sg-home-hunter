@@ -141,14 +141,19 @@ describe('backward-planner', () => {
     const network = buildTransitNetworkIndex({
       inventory: INVENTORY,
       networkDate: SEARCH_DATE,
-      busServices: {
-        '381': [['MID_BUS', 'WP_STOP']],
-        '999': [['FAR_WEST', 'MID_BUS']], // 11+ km single hop > 30m at 18m/s
-      },
-      busFirstLast: {
-        MID_BUS: ['381 0530 2330 = = = ='],
-        WP_STOP: ['381 0535 2335 = = = ='],
-        FAR_WEST: ['999 0530 2330 = = = ='],
+      busRoutes: {
+        '381': [
+          [
+            { stopId: 'MID_BUS', times: '0530 2330 = = = =' },
+            { stopId: 'WP_STOP', times: '0535 2335 = = = =' },
+          ],
+        ],
+        '999': [
+          [
+            { stopId: 'FAR_WEST', times: '0530 2330 = = = =' },
+            { stopId: 'MID_BUS' },
+          ],
+        ], // 11+ km single hop > 30m at 18m/s
       },
     })
     // Override 999 minRideMs? Actually 1.34,103.70 to 1.409,103.905 is ~24km -> >22 min at 18m/s + 5 min from MID_BUS, wait 24km / 18m/s = 1333s (~22m). Let's set rideCapMinutes: 15 so FAR_WEST is strictly over cap.
@@ -250,12 +255,13 @@ describe('backward-planner', () => {
     const network = buildTransitNetworkIndex({
       inventory: INVENTORY,
       networkDate: SEARCH_DATE,
-      busServices: {
-        '44': [['MID_BUS', 'WP_STOP']],
-      },
-      busFirstLast: {
-        MID_BUS: ['44 0630 0930 - - - -'],
-        WP_STOP: ['44 0635 0935 - - - -'],
+      busRoutes: {
+        '44': [
+          [
+            { stopId: 'MID_BUS', times: '0630 0930 - - - -' },
+            { stopId: 'WP_STOP', times: '0635 0935 - - - -' },
+          ],
+        ],
       },
     })
 
@@ -278,8 +284,7 @@ describe('backward-planner', () => {
     const network = buildTransitNetworkIndex({
       inventory: INVENTORY,
       networkDate: SEARCH_DATE,
-      busServices: {},
-      busFirstLast: {},
+      busRoutes: {},
     })
 
     const stationWorkplace: Workplace = {
@@ -358,8 +363,7 @@ describe('backward-planner', () => {
     const network = buildTransitNetworkIndex({
       inventory: interchangeInventory,
       networkDate: SEARCH_DATE,
-      busServices: {},
-      busFirstLast: {},
+      busRoutes: {},
     })
     const ns17 = interchangeInventory.stops[0]
     if (!ns17) {
@@ -447,12 +451,13 @@ describe('backward-planner', () => {
     const network = buildTransitNetworkIndex({
       inventory: inv249A,
       networkDate: SEARCH_DATE,
-      busServices: {
-        '249A': [['21359', '21349']],
-      },
-      busFirstLast: {
-        '21359': ['249A 0634 0830 - - - -'],
-        '21349': ['249A 0637 0832 - - - -'],
+      busRoutes: {
+        '249A': [
+          [
+            { stopId: '21359', times: '0634 0830 - - - -' },
+            { stopId: '21349', times: '0637 0832 - - - -' },
+          ],
+        ],
       },
     })
     const plan = planBackwardLeads({
@@ -482,13 +487,14 @@ describe('backward-planner', () => {
     const overnightNetwork = buildTransitNetworkIndex({
       inventory: inv,
       networkDate: '2026-12-01',
-      busServices: {
-        N1: [['MID_BUS', 'WP_STOP']],
-      },
-      busFirstLast: {
+      busRoutes: {
         // Weekday (Mon) runs 06:00 -> 00:35; Sat/Sun don't matter for Tue 00:30
-        MID_BUS: ['N1 0600 0035 - - - -'],
-        WP_STOP: ['N1 0605 0040 - - - -'],
+        N1: [
+          [
+            { stopId: 'MID_BUS', times: '0600 0035 - - - -' },
+            { stopId: 'WP_STOP', times: '0605 0040 - - - -' },
+          ],
+        ],
       },
     })
     const tuesdayPlan = planBackwardLeads({
@@ -512,12 +518,13 @@ describe('backward-planner', () => {
     const sundayOffNetwork = buildTransitNetworkIndex({
       inventory: inv,
       networkDate: '2026-11-30',
-      busServices: {
-        N1: [['MID_BUS', 'WP_STOP']],
-      },
-      busFirstLast: {
-        MID_BUS: ['N1 0600 0035 0600 0035 - -'],
-        WP_STOP: ['N1 0605 0040 0605 0040 - -'],
+      busRoutes: {
+        N1: [
+          [
+            { stopId: 'MID_BUS', times: '0600 0035 0600 0035 - -' },
+            { stopId: 'WP_STOP', times: '0605 0040 0605 0040 - -' },
+          ],
+        ],
       },
     })
     const mondayEarlyPlan = planBackwardLeads({
@@ -711,12 +718,13 @@ describe('backward-planner', () => {
     const gapNetwork = buildTransitNetworkIndex({
       inventory,
       networkDate: SEARCH_DATE,
-      busServices: {
+      busRoutes: {
         '77': [
-          ['PRE_GAP_A', 'PRE_GAP_B', 'MISSING_STOP', 'MID_BUS', 'WP_STOP'],
+          ['PRE_GAP_A', 'PRE_GAP_B', 'MISSING_STOP', 'MID_BUS', 'WP_STOP'].map(
+            (stopId) => ({ stopId }),
+          ),
         ],
       },
-      busFirstLast: {},
       maxTransferWalkMeters: 10,
     })
     const plan = planBackwardLeads({
@@ -761,8 +769,7 @@ describe('backward-planner', () => {
     const network = buildTransitNetworkIndex({
       inventory: bpInventory,
       networkDate: SEARCH_DATE,
-      busServices: {},
-      busFirstLast: {},
+      busRoutes: {},
     })
     const plan = planBackwardLeads({
       inventory: bpInventory,
@@ -878,12 +885,13 @@ describe('backward-planner', () => {
     const network = buildTransitNetworkIndex({
       inventory: inv858,
       networkDate: SEARCH_DATE,
-      busServices: {
-        '858': [['95159', '65191']],
-      },
-      busFirstLast: {
-        '95159': ['858 0633 0044 = 0043 0632 0039'],
-        '65191': ['858 0647 0056 = = 0645 0052'],
+      busRoutes: {
+        '858': [
+          [
+            { stopId: '95159', times: '0633 0044 = 0043 0632 0039' },
+            { stopId: '65191', times: '0647 0056 = = 0645 0052' },
+          ],
+        ],
       },
     })
     const plan = planBackwardLeads({
@@ -932,13 +940,14 @@ describe('backward-planner', () => {
     const network = buildTransitNetworkIndex({
       inventory: inv200A,
       networkDate: '2026-11-30',
-      busServices: {
-        '200A': [['18149', '18129', '16021']],
-      },
-      busFirstLast: {
-        '18149': ['200A 0850 0003 0003 = 0002 0002'],
-        '18129': ['200A 0852 0005 0004 0004 0003 0003'],
-        '16021': ['200A 0903 0014 0015 0015 0014 ='],
+      busRoutes: {
+        '200A': [
+          [
+            { stopId: '18149', times: '0850 0003 0003 = 0002 0002' },
+            { stopId: '18129', times: '0852 0005 0004 0004 0003 0003' },
+            { stopId: '16021', times: '0903 0014 0015 0015 0014 =' },
+          ],
+        ],
       },
     })
 
@@ -1032,6 +1041,46 @@ describe('backward-planner', () => {
     ).toBe(true)
     expect(
       farLead?.candidateDepartures.some((clock) => clock < '02:00:00'),
+    ).toBe(true)
+  })
+
+  it('discovers an early 812 candidate from its second interchange visit', () => {
+    const inventory = parseStopInventory(
+      readFileSync('public/data/stops.tsv', 'utf8'),
+    )
+    const bus = parseBusNetworkTsv(
+      readFileSync('public/data/bus-network.tsv', 'utf8'),
+    )
+    const network = buildTransitNetworkIndex({
+      inventory,
+      networkDate: bus.networkDate,
+      busRoutes: { '812': bus.busRoutes['812'] ?? [] },
+    })
+    const destination = inventory.stops.find((stop) => stop.id === '59091')
+    if (!destination) throw new Error('Missing stop 59091')
+    const plan = planBackwardLeads({
+      inventory,
+      networkIndex: { ...network, transfers: [] },
+      workplace: {
+        kind: 'postal',
+        postalCode: '760000',
+        label: destination.name,
+        point: destination.point,
+      },
+      constraints: {
+        searchDate: SEARCH_DATE,
+        officeStart: '05:35',
+        rideCapMinutes: 5,
+      },
+      maxTransfers: 0,
+      maxFinalWalkMeters: 0,
+    })
+    const lead = plan.leads.find((item) => item.stop.id === '59009')
+    expect(lead).toBeDefined()
+    expect(
+      lead?.candidateDepartures.some(
+        (clock) => clock >= '05:30:00' && clock <= '05:35:00',
+      ),
     ).toBe(true)
   })
 
@@ -1407,8 +1456,7 @@ describe('backward-planner', () => {
     const network = buildTransitNetworkIndex({
       inventory,
       networkDate: SEARCH_DATE,
-      busServices: {},
-      busFirstLast: {},
+      busRoutes: {},
     })
     const networkIndex = { ...network, transfers: [] }
     const journey = (

@@ -27,7 +27,8 @@ const MRT_HEADWAY_MS = 240_000
 const LRT_HEADWAY_MS = 300_000
 const BUS_HEADWAY_MS = 720_000
 const BUS_MAX_SPEED_MPS = 18
-const MRT_MAX_SPEED_MPS = 25
+// Use the faster rail ceiling for both MRT and LRT when ruling journeys out.
+const RAIL_MAX_SPEED_MPS = 25
 const SERVICE_DAY_CUTOFF_MIN = 240
 const LINEAR_MRT_PREFIXES: readonly string[] = [
   'NS',
@@ -83,8 +84,7 @@ export interface TransitNetworkIndex {
 interface BuildTransitNetworkInput {
   readonly inventory: StopInventory
   readonly networkDate: string
-  readonly busServices: Readonly<Record<string, readonly (readonly string[])[]>>
-  readonly busFirstLast: Readonly<Record<string, readonly string[]>>
+  readonly busRoutes: Readonly<Record<string, readonly (readonly BusVisit[])[]>>
   readonly maxTransferWalkMeters?: number
 }
 
@@ -93,10 +93,14 @@ interface ParsedFirstLastEntry {
   readonly windows: Readonly<Partial<Record<DayType, OperatingWindow>>>
 }
 
+export interface BusVisit {
+  readonly stopId: string
+  readonly times?: string
+}
+
 export interface ParsedBusNetworkData {
   readonly networkDate: string
-  readonly busServices: Readonly<Record<string, readonly (readonly string[])[]>>
-  readonly busFirstLast: Readonly<Record<string, readonly string[]>>
+  readonly busRoutes: Readonly<Record<string, readonly (readonly BusVisit[])[]>>
 }
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -113,50 +117,31 @@ export const parseBusNetworkDate = (
 const sanitizeTsvToken = (raw: string): string =>
   raw.replace(/[\t\r\n]+/g, ' ').trim()
 
-const appendServiceLines = (
-  lines: string[],
-  busServices: Readonly<Record<string, readonly (readonly string[])[]>>,
-): void => {
-  const serviceIds = Object.keys(busServices).sort((a, b) => a.localeCompare(b))
-  for (const serviceId of serviceIds) {
-    const cleanId = sanitizeTsvToken(serviceId)
-    const routes = busServices[serviceId]
-    if (!routes || cleanId.length === 0) {
-      continue
-    }
-    for (const route of routes) {
-      const cleanedRoute = route.map(sanitizeTsvToken).filter(Boolean)
-      if (cleanedRoute.length >= 2) {
-        lines.push(`R\t${cleanId}\t${cleanedRoute.join(',')}`)
-      }
-    }
-  }
-}
-
-const appendFirstLastLines = (
-  lines: string[],
-  busFirstLast: Readonly<Record<string, readonly string[]>>,
-): void => {
-  const stopIds = Object.keys(busFirstLast).sort((a, b) => a.localeCompare(b))
-  for (const stopId of stopIds) {
-    const cleanStopId = sanitizeTsvToken(stopId)
-    const entries = (busFirstLast[stopId] ?? [])
-      .map((item) => item.replace(/[|\t\r\n]+/g, ' ').trim())
-      .filter(Boolean)
-    if (cleanStopId.length > 0 && entries.length > 0) {
-      lines.push(`F\t${cleanStopId}\t${entries.join('|')}`)
-    }
-  }
-}
-
-/** Serialize dated BusRouter services and first/last timings into a compact TSV. */
+/** Serialize dated, direction-ordered bus routes with stop-visit-specific timings. */
 export const serializeBusNetworkTsv = (input: ParsedBusNetworkData): string => {
   if (!ISO_DATE_PATTERN.test(input.networkDate)) {
     throw new Error(`Invalid bus network date: ${input.networkDate}`)
   }
-  const lines = [`networkDate\t${input.networkDate}`, 'kind\tid\tpayload']
-  appendServiceLines(lines, input.busServices)
-  appendFirstLastLines(lines, input.busFirstLast)
+  const lines = [
+    `networkDate\t${input.networkDate}`,
+    'service\tdirection\tvisits',
+  ]
+  const serviceIds = Object.keys(input.busRoutes).sort((a, b) =>
+    a.localeCompare(b),
+  )
+  for (const serviceId of serviceIds) {
+    const routes = input.busRoutes[serviceId] ?? []
+    for (const [direction, route] of routes.entries()) {
+      if (route.length < 2) continue
+      const visits = route.map(
+        ({ stopId, times }) =>
+          `${sanitizeTsvToken(stopId)}${times === undefined ? '' : ` ${sanitizeTsvToken(times)}`}`,
+      )
+      lines.push(
+        `${sanitizeTsvToken(serviceId)}\t${String(direction + 1)}\t${visits.join('|')}`,
+      )
+    }
+  }
   return `${lines.join('\n')}\n`
 }
 
@@ -169,69 +154,17 @@ const parseNetworkHeader = (lines: readonly string[]): string => {
   if (metaParts[0] !== 'networkDate' || !ISO_DATE_PATTERN.test(networkDate)) {
     throw new Error('Bus network TSV missing valid networkDate header')
   }
-  if (lines[1] !== 'kind\tid\tpayload') {
+  if (lines[1] !== 'service\tdirection\tvisits') {
     throw new Error('Bus network TSV column header mismatch')
   }
   return networkDate
 }
 
-const parseRoutePayload = (
-  serviceId: string,
-  payload: string,
-  routesByService: Map<string, string[][]>,
-): void => {
-  const stops = payload
-    .split(',')
-    .map((token) => token.trim())
-    .filter((token) => token.length > 0)
-  if (stops.length < 2) {
-    return
-  }
-  const existing = routesByService.get(serviceId) ?? []
-  existing.push(stops)
-  routesByService.set(serviceId, existing)
-}
-
-const parseFirstLastPayload = (
-  stopId: string,
-  payload: string,
-  busFirstLast: Record<string, string[]>,
-): void => {
-  const entries = payload
-    .split('|')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-  if (entries.length === 0) {
-    return
-  }
-  const existing = busFirstLast[stopId]
-  if (existing) {
-    existing.push(...entries)
-  } else {
-    busFirstLast[stopId] = entries
-  }
-}
-
-const applyNetworkRow = (
-  line: string,
-  routesByService: Map<string, string[][]>,
-  busFirstLast: Record<string, string[]>,
-): void => {
-  const parts = line.split('\t')
-  if (parts.length !== 3) {
-    return
-  }
-  const kind = parts[0] ?? ''
-  const id = (parts[1] ?? '').trim()
-  const payload = (parts[2] ?? '').trim()
-  if (id.length === 0 || payload.length === 0) {
-    return
-  }
-  if (kind === 'R') {
-    parseRoutePayload(id, payload, routesByService)
-  } else if (kind === 'F') {
-    parseFirstLastPayload(id, payload, busFirstLast)
-  }
+const parseBusVisit = (raw: string): BusVisit => {
+  const separator = raw.indexOf(' ')
+  return separator === -1
+    ? { stopId: raw }
+    : { stopId: raw.slice(0, separator), times: raw.slice(separator + 1) }
 }
 
 /** Parse a compact bus-network TSV produced by `serializeBusNetworkTsv`. */
@@ -241,18 +174,36 @@ export const parseBusNetworkTsv = (rawTsv: string): ParsedBusNetworkData => {
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
   const networkDate = parseNetworkHeader(lines)
-
-  const routesByService = new Map<string, string[][]>()
-  const busFirstLast: Record<string, string[]> = {}
-  for (let index = 2; index < lines.length; index += 1) {
-    applyNetworkRow(lines[index] ?? '', routesByService, busFirstLast)
+  const routesByService = new Map<string, Map<number, BusVisit[]>>()
+  for (const line of lines.slice(2)) {
+    const parts = line.split('\t')
+    const serviceId = parts[0] ?? ''
+    const direction = Number(parts[1])
+    const visits = (parts[2] ?? '')
+      .split('|')
+      .filter(Boolean)
+      .map(parseBusVisit)
+    if (
+      parts.length !== 3 ||
+      serviceId.length === 0 ||
+      !Number.isInteger(direction) ||
+      direction < 1 ||
+      visits.length < 2
+    ) {
+      continue
+    }
+    const routes =
+      routesByService.get(serviceId) ?? new Map<number, BusVisit[]>()
+    routes.set(direction, visits)
+    routesByService.set(serviceId, routes)
   }
-
-  const busServices: Record<string, string[][]> = {}
+  const busRoutes: Record<string, BusVisit[][]> = {}
   for (const [serviceId, routes] of routesByService) {
-    busServices[serviceId] = routes
+    busRoutes[serviceId] = [...routes]
+      .sort(([a], [b]) => a - b)
+      .map(([, route]) => route)
   }
-  return { networkDate, busServices, busFirstLast }
+  return { networkDate, busRoutes }
 }
 
 const toRadians = (deg: number): number => (deg * Math.PI) / 180
@@ -385,86 +336,15 @@ export const parseBusRouterFirstLastLine = (
   return { serviceId, windows }
 }
 
-const buildFirstLastLookup = (
-  raw: Readonly<Record<string, readonly string[]>>,
-): ReadonlyMap<
-  string,
-  ReadonlyMap<string, readonly ParsedFirstLastEntry[]>
-> => {
-  const byStop = new Map<string, Map<string, ParsedFirstLastEntry[]>>()
-  for (const [stopId, lines] of Object.entries(raw)) {
-    const byService = new Map<string, ParsedFirstLastEntry[]>()
-    for (const line of lines) {
-      const parsed = parseBusRouterFirstLastLine(line)
-      if (!parsed) {
-        continue
-      }
-      const list = byService.get(parsed.serviceId) ?? []
-      list.push(parsed)
-      byService.set(parsed.serviceId, list)
-    }
-    byStop.set(stopId, byService)
-  }
-  return byStop
-}
-
 const getRefFirstMin = (entry: ParsedFirstLastEntry): number | null =>
   entry.windows.weekday?.firstMin ??
   entry.windows.saturday?.firstMin ??
   entry.windows.sunday_holiday?.firstMin ??
   null
 
-const matchPreviousFirstMin = (
-  candidates: readonly ParsedFirstLastEntry[],
-  prevFirstMin: number,
-): ParsedFirstLastEntry | undefined => {
-  let best: ParsedFirstLastEntry | undefined
-  let bestDelta = Number.POSITIVE_INFINITY
-  for (const candidate of candidates) {
-    const first = getRefFirstMin(candidate)
-    if (first === null) {
-      continue
-    }
-    const delta = first - prevFirstMin
-    if (delta >= 0 && delta < bestDelta) {
-      bestDelta = delta
-      best = candidate
-    }
-  }
-  return best
-}
-
-const matchNextFirstMin = (
-  candidates: readonly ParsedFirstLastEntry[],
-  nextCandidates: readonly ParsedFirstLastEntry[],
-): ParsedFirstLastEntry | undefined =>
-  candidates.find((candidate) => {
-    const first = getRefFirstMin(candidate)
-    if (first === null) {
-      return false
-    }
-    return nextCandidates.some((nxt) => {
-      const nextFirst = getRefFirstMin(nxt)
-      return nextFirst !== null && nextFirst >= first && nextFirst - first <= 20
-    })
-  })
-
-const pickBestFirstLastEntry = (
-  candidates: readonly ParsedFirstLastEntry[],
-  prevFirstMin: number | null,
-  nextCandidates: readonly ParsedFirstLastEntry[],
-): ParsedFirstLastEntry | undefined => {
-  if (candidates.length <= 1) {
-    return candidates[0]
-  }
-  if (prevFirstMin !== null) {
-    const matchedPrev = matchPreviousFirstMin(candidates, prevFirstMin)
-    if (matchedPrev) {
-      return matchedPrev
-    }
-  }
-  return matchNextFirstMin(candidates, nextCandidates) ?? candidates[0]
-}
+// Dwell, typical operating speed and timetable deltas belong in estimates.
+const minimumRideMs = (distanceM: number, maxSpeedMps: number): number =>
+  Math.floor((distanceM / maxSpeedMps) * 1000)
 
 const computeBusSegmentTiming = (
   fromStop: Stop,
@@ -486,11 +366,7 @@ const computeBusSegmentTiming = (
   const validDeltaMs =
     deltaMs !== null && impliedSpeedMps <= 21 ? deltaMs : null
 
-  const physicalMinMs = Math.max(
-    20_000,
-    Math.round((distM / BUS_MAX_SPEED_MPS) * 1000 + 10_000),
-  )
-  const minRideMs = physicalMinMs
+  const minRideMs = minimumRideMs(distM, BUS_MAX_SPEED_MPS)
   const estRideMs =
     validDeltaMs !== null
       ? Math.max(minRideMs, Math.round(validDeltaMs * 1.15))
@@ -505,55 +381,23 @@ const computeBusSegmentTiming = (
   }
 }
 
-const alignRouteFirstLast = (
-  serviceId: string,
-  route: readonly string[],
-  firstLastLookup: ReadonlyMap<
-    string,
-    ReadonlyMap<string, readonly ParsedFirstLastEntry[]>
-  >,
-): readonly (ParsedFirstLastEntry | undefined)[] => {
-  const aligned: (ParsedFirstLastEntry | undefined)[] = []
-  const usedEntries = new Set<ParsedFirstLastEntry>()
-  let prevFirstMin: number | null = null
-  for (let i = 0; i < route.length; i += 1) {
-    const entries = firstLastLookup.get(route[i] ?? '')?.get(serviceId) ?? []
-    // Separate first/last rows at the same stop describe distinct route visits.
-    const candidates =
-      entries.length > 1
-        ? entries.filter((entry) => !usedEntries.has(entry))
-        : entries
-    const nextCandidates =
-      firstLastLookup.get(route[i + 1] ?? '')?.get(serviceId) ?? []
-    const chosen = pickBestFirstLastEntry(
-      candidates,
-      prevFirstMin,
-      nextCandidates,
-    )
-    aligned.push(chosen)
-    if (!chosen) continue
-    if (entries.length > 1) usedEntries.add(chosen)
-    prevFirstMin = getRefFirstMin(chosen) ?? prevFirstMin
-  }
-  return aligned
-}
-
 const buildBusPatternsForRoute = (
   serviceId: string,
   dirIdx: number,
-  route: readonly string[],
+  route: readonly BusVisit[],
   stopsById: ReadonlyMap<string, Stop>,
-  firstLastLookup: ReadonlyMap<
-    string,
-    ReadonlyMap<string, readonly ParsedFirstLastEntry[]>
-  >,
 ): TransitPattern[] => {
-  const aligned = alignRouteFirstLast(serviceId, route, firstLastLookup)
+  const entries = route.map((visit) =>
+    visit.times === undefined
+      ? undefined
+      : (parseBusRouterFirstLastLine(`${serviceId} ${visit.times}`) ??
+        undefined),
+  )
   const chunks: TransitSegment[][] = []
   let current: TransitSegment[] = []
   for (let i = 0; i < route.length - 1; i += 1) {
-    const fromStop = stopsById.get(route[i] ?? '')
-    const toStop = stopsById.get(route[i + 1] ?? '')
+    const fromStop = stopsById.get(route[i]?.stopId ?? '')
+    const toStop = stopsById.get(route[i + 1]?.stopId ?? '')
     if (!fromStop || !toStop) {
       if (current.length > 0) {
         chunks.push(current)
@@ -562,7 +406,7 @@ const buildBusPatternsForRoute = (
       continue
     }
     current.push(
-      computeBusSegmentTiming(fromStop, toStop, aligned[i], aligned[i + 1]),
+      computeBusSegmentTiming(fromStop, toStop, entries[i], entries[i + 1]),
     )
   }
   if (current.length > 0) {
@@ -583,14 +427,10 @@ const buildBusPatternsForRoute = (
 
 const buildBusPatterns = (
   stopsById: ReadonlyMap<string, Stop>,
-  busServices: Readonly<Record<string, readonly (readonly string[])[]>>,
-  firstLastLookup: ReadonlyMap<
-    string,
-    ReadonlyMap<string, readonly ParsedFirstLastEntry[]>
-  >,
+  busRoutes: Readonly<Record<string, readonly (readonly BusVisit[])[]>>,
 ): TransitPattern[] => {
   const patterns: TransitPattern[] = []
-  for (const [serviceId, routes] of Object.entries(busServices)) {
+  for (const [serviceId, routes] of Object.entries(busRoutes)) {
     for (let dirIdx = 0; dirIdx < routes.length; dirIdx += 1) {
       patterns.push(
         ...buildBusPatternsForRoute(
@@ -598,7 +438,6 @@ const buildBusPatterns = (
           dirIdx,
           routes[dirIdx] ?? [],
           stopsById,
-          firstLastLookup,
         ),
       )
     }
@@ -639,12 +478,9 @@ const buildRailSegment = (
   operatingWindows: Readonly<Partial<Record<DayType, DayOperatingWindows>>>,
 ): TransitSegment => {
   const distM = haversineDistanceMeters(fromStop.point, toStop.point)
-  // MRT pruning uses an optimistic physical bound, not the ranking estimate.
-  const minRideMs = isLrt
-    ? Math.max(50_000, Math.round((distM / 10) * 1000 + 25_000))
-    : Math.max(20_000, Math.round((distM / MRT_MAX_SPEED_MPS) * 1000 + 10_000))
+  const minRideMs = minimumRideMs(distM, RAIL_MAX_SPEED_MPS)
   const estRideMs = isLrt
-    ? Math.max(minRideMs, Math.round((distM / 7.5) * 1000 + 35_000))
+    ? Math.max(50_000, Math.round((distM / 7.5) * 1000 + 35_000))
     : Math.max(75_000, Math.round((distM / 12.5) * 1000 + 50_000))
   return {
     fromStopId: fromStop.id,
@@ -907,16 +743,11 @@ export const buildTransitNetworkIndex = (
   input: BuildTransitNetworkInput,
 ): TransitNetworkIndex => {
   const stopsById = new Map(input.inventory.stops.map((s) => [s.id, s]))
-  const firstLastLookup = buildFirstLastLookup(input.busFirstLast)
-  const busPatterns = buildBusPatterns(
-    stopsById,
-    input.busServices,
-    firstLastLookup,
-  )
+  const busPatterns = buildBusPatterns(stopsById, input.busRoutes)
   const railPatterns = buildRailTopologyPatterns(input.inventory, stopsById)
   const provenance: NetworkProvenance[] = [
     {
-      source: 'data.busrouter.sg/v1 (services + firstlast)',
+      source: 'data.busrouter.sg/v1/raw/bus-routes.datamall.json',
       version: input.networkDate,
       license: 'LTA DataMall / Singapore Open Data Licence v1.0',
       timingKind: 'first_last_estimated',
