@@ -216,6 +216,56 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(alert).not.toContainText('Wrong password')
   })
 
+  test('blocks duplicate postal submission during lookup and unlocks after lookup failure', async ({
+    page,
+  }) => {
+    await stubTilesAndInventory(page)
+    await page.context().route('**/api/auth/post/getToken', (route) =>
+      fulfillJson(route, 200, {
+        access_token: 'mock-jwt',
+        expiry_timestamp: 1_900_000_000,
+      }),
+    )
+
+    const lookupStarted = Promise.withResolvers<void>()
+    const lookupGate = Promise.withResolvers<void>()
+    let lookupAttempts = 0
+    await page
+      .context()
+      .route('**/api/common/elastic/search*', async (route) => {
+        lookupAttempts += 1
+        lookupStarted.resolve()
+        await lookupGate.promise
+        await fulfillJson(route, 503, { error: 'lookup unavailable' })
+      })
+
+    await page.goto('/')
+    await signInViaUi(page)
+    await page.fill('#postal-input', '018989')
+    await page.click('#start-search-btn')
+    await lookupStarted.promise
+
+    const startButton = page.locator('#start-search-btn')
+    try {
+      await expect(startButton).toBeDisabled()
+      // Native form submission must also respect the in-flight lookup.
+      await page.locator('#search-form').evaluate((form: HTMLFormElement) => {
+        form.requestSubmit()
+      })
+    } finally {
+      lookupGate.resolve()
+    }
+
+    await expect(page.locator('#search-error')).toHaveText(
+      'OneMap postal lookup failed (HTTP 503).',
+    )
+    await expect(startButton).toBeEnabled()
+    expect(lookupAttempts).toBe(1)
+
+    await startButton.click()
+    await expect.poll(() => lookupAttempts).toBe(2)
+  })
+
   test('streams distant-before-nearby patches, supports overlap/disconnected selection, and verifies station identity', async ({
     page,
   }) => {

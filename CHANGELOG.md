@@ -2,6 +2,7 @@
 
 ## 2026-11-26
 
+- Disable Start while resolving the workplace so a second submission cannot mix results from two searches.
 - Keep Stop available while a browser worker plans departures. Stopping during planning leaves the last completed offline search intact.
 - Preserve feasible feeder rides after equal-cost replacements, retain better over-cap estimates and probe materially different departure times even when their feasible windows overlap.
 - Bound each loop ride at its alighting stop and use station- and direction-specific Circle Line first trains and weekday spur windows.

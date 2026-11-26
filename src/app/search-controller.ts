@@ -274,12 +274,10 @@ const beginSearch = async (
 ) => {
   const { els, mapView, state } = ctx
   const { workplace, constraints } = request
-  state.isSearching = true
   state.abortController = controller
   state.workplace = workplace
   state.matches = []
   els.stopSearchButton.hidden = false
-  syncConnectivity(ctx)
   mapView.clearStops()
   mapView.setWorkplace(workplace)
   renderConstraintsSummary(
@@ -332,6 +330,9 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   const searchDate = getDefaultSearchDate(Date.now())
   els.plannedSearchDate.textContent = searchDate
 
+  state.isSearching = true
+  syncConnectivity(ctx)
+
   let workplace: Workplace
   try {
     workplace = await resolveWorkplaceFromForm(
@@ -340,12 +341,14 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
       state.account,
     )
   } catch (error) {
+    state.isSearching = false
     if (error instanceof OneMapAuthError) {
       state.account = null
       syncAccountUi(ctx)
       renderInlineError(els.authError, error.message)
       return
     }
+    syncConnectivity(ctx)
     renderInlineError(
       els.searchError,
       normalizeError(error, 'Unable to resolve workplace.').message,
