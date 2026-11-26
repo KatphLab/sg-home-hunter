@@ -3,8 +3,13 @@ import {
   SINGAPORE_OUTLINE_GEOJSON,
 } from '@config/singapore-outline.js'
 import type { BackwardLead } from '@lib/backward-planner.js'
-import type { Coordinates, QualifiedStop, Workplace } from '@lib/commute-types.js'
+import type {
+  Coordinates,
+  QualifiedStop,
+  Workplace,
+} from '@lib/commute-types.js'
 import L from 'leaflet'
+import { hasTenMinuteMargin } from './neighbourhood-preview.js'
 
 const SINGAPORE_CENTER: [number, number] = [1.3521, 103.8198]
 const DEFAULT_ZOOM = 12
@@ -194,10 +199,9 @@ export class CommuteMapView {
         pane: 'estimatePane',
         renderer: this.estimateRenderer,
         radius: 4,
-        color:
-          rideCapMinutes * 60_000 - lead.estRideMs >= 600_000
-            ? '#2459a6'
-            : '#a65c00',
+        color: hasTenMinuteMargin(lead.estRideMs, rideCapMinutes)
+          ? '#2459a6'
+          : '#a65c00',
         weight: 1,
         fillOpacity: 0.75,
         interactive: false,

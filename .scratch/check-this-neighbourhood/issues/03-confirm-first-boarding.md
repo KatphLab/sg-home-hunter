@@ -32,3 +32,9 @@ Evidence:
 Ticket 04 owns `src/app/area-check.ts` (`checkSelectedArea`; internal `plannedProbes`, `runAreaBatch`, `retainBoardings`, `showProof`, `showOutcome`). Same-search state is `AppState.areaCheck: AreaCheckState` in `src/app/search-controller.ts`: `checkedDepartures`, `checksPerformed`, `hasRun`; all actual proof is `AppState.matches`. Controller-private selection/stop lifecycle resets the current answer but preserves checked keys and proof across area choices. Wire continuation in `public/index.html`, `src/app/dom-render.ts` and `src/app/main.ts`; no Check More action exists yet.
 
 Ticket 05 retains ownership of existing snapshot load/render in `src/app/main.ts` (`loadCompletedResult` bootstrap), `src/app/search-controller.ts` (`applySnapshot`), `src/lib/saved-result-store.ts` and `CompletedSearchSnapshot` in `src/lib/commute-types.ts`. The successful area boundary is `showProof` in `area-check.ts`; no speculative persistence hook or callback was added. Existing saved v1 user data is untouched.
+
+## Comments
+
+Integrated review: attempted departure identities remain deduplicated, while completed evaluations are tracked separately. Failed or interrupted attempts remain explicitly incomplete when remaining departures are exhausted and when an overlapping selection reuses that exhausted queue. No retries added. Live counters count distinct evaluated estimated stops, not logical probes; qualifying boardings remain a separate unit.
+
+Proof: affected browser suites passed 41 cases; typecheck and `bun run fix` passed. Failure/Stop then queue exhaustion/reselection regressions assert eight unique requests and honest incomplete outcomes. Recorded complexity gates were resolved by extracting routing-error presentation and checked-area parsing, without configuration changes or assertion removal.

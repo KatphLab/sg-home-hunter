@@ -32,12 +32,14 @@ import type { CommuteMapView } from './map-view.js'
 import {
   candidatesWithinArea,
   createNeighbourhoodPreview,
+  hasTenMinuteMargin,
   type NeighbourhoodPreview,
 } from './neighbourhood-preview.js'
 import { planInWorker } from './plan-in-worker.js'
 
 export interface AreaCheckState {
   readonly checkedDepartures: Set<string>
+  readonly completedDepartures: Set<string>
   checksPerformed: number
   hasRun: boolean
   hasMore: boolean
@@ -222,6 +224,7 @@ export const selectArea = (
     return
   }
   resetAreaSelection(ctx)
+  if (!focus) refreshAreaStopPicker(ctx)
   state.selectedArea = centre
   const count = candidatesWithinArea(state.preview, centre).length
   mapView.setAreaSelection(centre, focus)
@@ -244,7 +247,7 @@ export const invalidatePreview = (ctx: AppContext): void => {
   els.areaResult.textContent = ''
   els.areaJourney.hidden = true
   els.stopSearchButton.hidden = true
-  mapView.clearPreview()
+  if (wasActive) mapView.clearPreview()
   if (wasActive) {
     state.workplace = null
     state.matches = []
@@ -268,6 +271,7 @@ const displayPreview = (
   state.preview = preview
   state.areaCheck = {
     checkedDepartures: new Set(),
+    completedDepartures: new Set(),
     checksPerformed: 0,
     hasRun: false,
     hasMore: false,
@@ -302,13 +306,12 @@ const displayPreview = (
     preview.constraints.officeStart,
     preview.constraints.rideCapMinutes,
   )
-  renderCounters(els, 0, 0, state.matches.length)
+  renderCounters(els, 0, preview.leads.length, state.matches.length)
   selectStop(ctx, null)
   els.resultStatusTag.textContent = 'Estimated preview'
   els.resultStatusTag.className = 'status-tag status-tag--muted'
-  const marginCount = preview.leads.filter(
-    (lead) =>
-      preview.constraints.rideCapMinutes * 60_000 - lead.estRideMs >= 600_000,
+  const marginCount = preview.leads.filter((lead) =>
+    hasTenMinuteMargin(lead.estRideMs, preview.constraints.rideCapMinutes),
   ).length
   els.previewSummary.textContent = `${String(preview.leads.length)} estimated stops: ${String(marginCount)} at least 10 min below cap; ${String(preview.leads.length - marginCount)} less than 10 min below. No routing requests made.`
   els.liveStatusRegion.textContent = els.previewSummary.textContent
@@ -320,6 +323,8 @@ const displayPreview = (
 }
 
 const showPreviewError = (ctx: AppContext, error: unknown): void => {
+  renderStatusBadge(ctx.els.resultStatusTag, 'idle')
+  ctx.els.liveStatusRegion.textContent = 'Unable to prepare preview.'
   if (error instanceof OneMapAuthError) {
     ctx.state.account = null
     renderInlineError(ctx.els.authError, error.message)
@@ -397,6 +402,7 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
 }
 
 const mapViewForPlanning = (ctx: AppContext, workplace: Workplace): void => {
+  ctx.mapView.clearPreview()
   ctx.mapView.clearStops()
   ctx.mapView.setWorkplace(workplace)
   selectStop(ctx, null)

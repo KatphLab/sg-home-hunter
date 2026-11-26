@@ -32,8 +32,11 @@ import {
 const wireUiEvents = (ctx: AppContext): void => {
   const { els, mapView, state } = ctx
 
-  els.searchForm.addEventListener('input', () => invalidatePreview(ctx))
-  els.searchForm.addEventListener('change', () => invalidatePreview(ctx))
+  const invalidateSearchInput = (event: Event): void => {
+    if (event.target !== els.stationFilterInput) invalidatePreview(ctx)
+  }
+  els.searchForm.addEventListener('input', invalidateSearchInput)
+  els.searchForm.addEventListener('change', invalidateSearchInput)
   els.areaStopFilter.addEventListener('input', () => refreshAreaStopPicker(ctx))
   els.areaStopSelect.addEventListener('change', () => {
     const stop = state.inventory?.stops.find(

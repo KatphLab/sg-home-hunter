@@ -8,11 +8,14 @@ import {
   formatServiceChain,
 } from '@lib/journey-format.js'
 import { saveCompletedResult } from '@lib/saved-result-store.js'
+import { haversineDistanceMeters } from '@lib/transit-network.js'
+import { normalizeError } from '@utils/guards.js'
 import {
   renderConstraintsSummary,
   renderCounters,
   renderStatusBadge,
 } from './dom-render.js'
+import { candidatesWithinArea } from './neighbourhood-preview.js'
 import { type AppContext, selectStop } from './search-controller.js'
 
 export const showOutcome = (ctx: AppContext, message: string): void => {
@@ -20,6 +23,16 @@ export const showOutcome = (ctx: AppContext, message: string): void => {
   ctx.els.areaResult.textContent = `${message} ${String(ctx.state.areaCheck?.checksPerformed ?? 0)} checks performed.`
   ctx.els.liveStatusRegion.textContent = ctx.els.areaResult.textContent
 }
+
+export const checkedStopCount = (
+  departures: ReadonlySet<string>,
+  stopIds: ReadonlySet<string>,
+): number =>
+  new Set(
+    [...departures]
+      .map((key) => key.split('@')[0])
+      .filter((id) => id !== undefined && stopIds.has(id)),
+  ).size
 
 export const showProof = (ctx: AppContext, proof: QualifiedStop): void => {
   const times = formatJourneyTimes(proof.journey)
@@ -30,6 +43,11 @@ export const showProof = (ctx: AppContext, proof: QualifiedStop): void => {
   selectStop(ctx, proof.stop.id)
   const { preview, selectedArea, inventory, areaCheck, matches } = ctx.state
   if (!preview || !selectedArea || !inventory) return
+  const candidates = candidatesWithinArea(preview, selectedArea)
+  const triedCount = checkedStopCount(
+    areaCheck?.completedDepartures ?? new Set(),
+    new Set(candidates.map((lead) => lead.stop.id)),
+  )
   try {
     saveCompletedResult(window.localStorage, {
       version: 1,
@@ -37,12 +55,17 @@ export const showProof = (ctx: AppContext, proof: QualifiedStop): void => {
       inventoryDate: inventory.inventoryDate,
       workplace: preview.workplace,
       constraints: preview.constraints,
-      triedCount: areaCheck?.checkedDepartures.size ?? 0,
-      totalCount: areaCheck?.checkedDepartures.size ?? 0,
-      matches,
+      triedCount,
+      totalCount: candidates.length,
+      matches: matches.filter(
+        (entry) =>
+          haversineDistanceMeters(entry.stop.point, selectedArea) <= 500,
+      ),
       checkedArea: { centre: selectedArea, proofStopId: proof.stop.id },
     })
-  } catch {
+  } catch (error) {
+    const diagnostic = normalizeError(error, 'Offline storage failed')
+    console.error('Could not save offline area result', diagnostic.name)
     ctx.els.areaResult.textContent +=
       ' Could not save this area for offline viewing. Your previous saved result is unchanged.'
     ctx.els.liveStatusRegion.textContent = ctx.els.areaResult.textContent

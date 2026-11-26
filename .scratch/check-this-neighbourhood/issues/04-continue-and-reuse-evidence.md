@@ -26,3 +26,9 @@ Proof:
 - `bun run build:pwa && bun build --target=bun --outdir=dist src/index.ts && bunx --no-install playwright test e2e/commute-zones.test.ts --grep 'continues only|a later batch|starts fresh verification|reports (auth|network)'`: **8 passed**.
 - Browser evidence observes 3/3/2 fresh-probe batches and exhaustion, exact round-robin request origins, no duplicates after reselecting an exhausted overlap, later proof stopping the second batch at two calls, unchanged actual evidence/date reused with zero calls, all four changed constraints starting fresh, and auth/network errors remaining distinct from misses.
 - Worktree started at integration `3ef9c50`; integration tip is merged before handoff.
+
+## Comments
+
+Integrated review: continuation preserves attempted identities separately from successful evaluations, so no-repeat behavior cannot turn failed/aborted probes into negative evidence. Browser regressions exhaust the remaining queue after failure and Stop, then reselect an overlapping circle and assert the incomplete warning with zero new requests. Station-name filtering also preserves both checked departures and exact-station proof. Existing workplace/constraint changes still invalidate.
+
+Proof: both affected suites passed, 41 browser cases; typecheck and `bun run fix` passed. Complexity-heavy test branches were separated by scenario action/assertion helpers without dropping coverage.

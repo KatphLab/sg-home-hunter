@@ -12,6 +12,11 @@ export interface NeighbourhoodPreview {
   readonly leads: readonly BackwardLead[]
 }
 
+export const hasTenMinuteMargin = (
+  estimatedRideMs: number,
+  rideCapMinutes: number,
+): boolean => rideCapMinutes * 60_000 - estimatedRideMs >= 600_000
+
 export const createNeighbourhoodPreview = (
   plan: BackwardPlanResult,
   workplace: Workplace,
@@ -24,7 +29,8 @@ export const createNeighbourhoodPreview = (
     leads: plan.leads.filter(
       (lead) =>
         lead.estRideMs <= constraints.rideCapMinutes * 60_000 &&
-        haversineDistanceMeters(lead.stop.point, workplace.point) <= radiusMeters,
+        haversineDistanceMeters(lead.stop.point, workplace.point) <=
+          radiusMeters,
     ),
   }
 }

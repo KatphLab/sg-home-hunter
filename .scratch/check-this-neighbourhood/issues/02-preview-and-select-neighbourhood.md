@@ -28,3 +28,9 @@ Evidence:
 - `git merge feat/check-this-neighbourhood`: already up to date.
 
 Ticket 03 contracts: `NeighbourhoodPreview` contains the resolved `workplace`, fixed `constraints` and eligible original `BackwardLead[]` (including planner departure order). `createNeighbourhoodPreview(plan, workplace, constraints)` applies the radius/cap filter; `candidatesWithinArea(preview, centre)` applies inclusive 500 m distance. `AppState.preview` and `AppState.selectedArea` hold active in-memory selection; `selectArea` handles pointer/picker selection and `invalidatePreview` clears it. Existing `state.matches` remains actual proof only. The global scanner module remains untouched for replacement in 03, but its production controller wiring is removed.
+
+## Comments
+
+Integrated review regressions resolved: map clicks rebuild the picker so keyboard users can return to the same stop; station-name filtering retains an unchanged exact workplace and its proof/departures; worker errors end planning and update the live region. The ten-minute margin predicate is shared by text and colors. Browser acceptance now observes actual blue and amber canvas pixels (not private planner data), without fixed waits.
+
+Proof: `bun run typecheck`, `bun run fix` (Biome and Knip), and `bunx --no-install playwright test e2e/commute-zones.test.ts e2e/offline-area.test.ts` passed, 41 browser cases. `skill://tdd` remains unavailable; tests use the agreed browser seam. Initial proof exposed the native listbox active-option behavior; rebuilding its options, rather than merely clearing selectedIndex, fixes returning by keyboard.

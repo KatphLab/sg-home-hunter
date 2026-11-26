@@ -10,6 +10,8 @@ House Hunter is an installable, client-only PWA for comparing estimated Singapor
 - **Check a neighbourhood:** Click the map or use the keyboard/mobile stop picker to centre a 500 m straight-line area. **Check within 500 m** tries up to three previously untried planned departures, shortest estimated rides first and each stop's first departure before its second. It stops on the first actual qualifying boarding inside the circle. **Check more departures** continues with another batch only while untried probes remain. Transfers and explicit intermediate pickups can prove the area; overlapping areas reuse same-search evidence without repeating requests. Inspect actual boarding, services, date, ride time and workplace arrival beside the picker. Empty estimates, unconfirmed checks, routing failures and expired sign-in remain distinct; none proves an area unreachable.
 - **Offline viewing:** The Service Worker caches the PWA shell and bundled inventory. A successful area check saves its verified map and original constraints locally for reopening without sign-in. A preview, unsuccessful or interrupted check never replaces the previous completed result. Estimates are not saved as verified journeys.
 
+Stop counters count distinct estimated stops with a completed routing evaluation, against the preview's estimated stop count; matched stops count proven boardings separately. They do not count logical departure probes or imply a full scan. Saved area counters and evidence are restricted to that selected circle. Failed or interrupted probes remain unconfirmed and are never repeated automatically, including after an overlapping selection exhausts its queue.
+
 ## Getting started
 
 Requires Bun 1.4.4 or newer and Node.js 24/26 for static-analysis tooling.

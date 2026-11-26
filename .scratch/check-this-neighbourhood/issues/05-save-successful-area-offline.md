@@ -28,3 +28,9 @@ Evidence:
 - Isolated fixture uses browser-context network interception with an active controlling service worker. Visible map/list/journey/date/constraints/scope assertions prove successful offline restoration and preservation through a subsequent preview, empty area, valid miss, expired sign-in, routing failure, Stop, closing pending work and quota failure. Quota failure remains a confirmed commute, not a routing error; the prior successful snapshot remains viewable offline.
 
 No shared browser-suite, scheduler/controller/entrypoint/markup, docs/changelog or service-worker cache-version changes. Broad gates remain with the parent integration owner.
+
+## Comments
+
+Integrated review: successful saves filter evidence and distinct-stop counters to the selected 500 m circle, retaining session-wide proof only in memory. A missed area's unrelated boarding is not restored as part of another area's saved result. Restored outline, original constraints and selectable proof survive offline form edits until a new displayed result replaces them. Quota/access failures log the normalized error name only, never snapshots, credentials or tokens; saving failure stays distinct from routing failure and leaves the previous snapshot intact. Existing v1 stored results remain readable without migration or data removal.
+
+Proof: typecheck and `bun run fix` passed; 41 affected browser cases passed, including active-service-worker scoped persistence, restored form edits, legacy saved-result restoration, and quota diagnostics. All recorded innerText/complexity gate failures are fixed without narrowing assertions.

@@ -10,7 +10,8 @@ import type {
 import { fetchTransitPlan, OneMapAuthError } from '@lib/onemap-client.js'
 import { haversineDistanceMeters } from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'
-import { showOutcome, showProof } from './area-result.js'
+import { checkedStopCount, showOutcome, showProof } from './area-result.js'
+import { renderCounters } from './dom-render.js'
 import {
   candidatesWithinArea,
   type NeighbourhoodPreview,
@@ -31,7 +32,9 @@ const proofWithinArea = (
     (entry) => haversineDistanceMeters(entry.stop.point, centre) <= 500,
   )
 
-function* plannedProbes(leads: readonly BackwardLead[]) {
+function* plannedProbes(
+  leads: readonly BackwardLead[],
+): Generator<{ stop: Stop; departure: string }> {
   const rounds = leads.reduce(
     (max, lead) => Math.max(max, lead.candidateDepartures.length),
     0,
@@ -103,6 +106,16 @@ const runAreaBatch = async (
     })
     if (controller !== ctx.state.abortController) return
     retainBoardings(ctx, result.itineraries, preview.constraints, stopsById)
+    areaCheck.completedDepartures.add(key)
+    renderCounters(
+      ctx.els,
+      checkedStopCount(
+        areaCheck.completedDepartures,
+        new Set(preview.leads.map((lead) => lead.stop.id)),
+      ),
+      preview.leads.length,
+      ctx.state.matches.length,
+    )
     const proof = proofWithinArea(ctx, centre)
     if (proof) {
       areaCheck.hasMore = false
@@ -111,12 +124,41 @@ const runAreaBatch = async (
     }
     if (areaCheck.checksPerformed === 3) break
   }
+  const incompleteCount = [...plannedProbes(leads)].filter(
+    ({ stop, departure }) => {
+      const key = `${stop.id}@${departure}`
+      return (
+        areaCheck.checkedDepartures.has(key) &&
+        !areaCheck.completedDepartures.has(key)
+      )
+    },
+  ).length
+  const exhaustion =
+    incompleteCount > 0
+      ? `No untried planned departures remain. ${String(incompleteCount)} attempted checks failed or were interrupted; these are not negative journey evidence.`
+      : 'All planned departures for this area have been checked.'
   showOutcome(
     ctx,
     areaCheck.hasMore
       ? 'Not confirmed in these checks. Other qualifying journeys may exist.'
-      : 'Not confirmed in these checks. All planned departures for this area have been checked. Other qualifying journeys may exist.',
+      : `Not confirmed in the completed checks. ${exhaustion} Other qualifying journeys may exist.`,
   )
+}
+
+const showRoutingError = (ctx: AppContext, error: unknown): void => {
+  if (error instanceof OneMapAuthError) {
+    ctx.state.account = null
+    showOutcome(
+      ctx,
+      'Sign-in expired. Connect OneMap again; failed routing is not evidence of no journey.',
+    )
+    syncAccountUi(ctx)
+  } else {
+    showOutcome(
+      ctx,
+      `Routing failed: ${normalizeError(error, 'Unable to check this area.').message} This is not evidence of no journey.`,
+    )
+  }
 }
 
 export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
@@ -169,19 +211,7 @@ export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
     )
   } catch (error) {
     if (controller !== state.abortController) return
-    if (error instanceof OneMapAuthError) {
-      state.account = null
-      showOutcome(
-        ctx,
-        'Sign-in expired. Connect OneMap again; failed routing is not evidence of no journey.',
-      )
-      syncAccountUi(ctx)
-    } else {
-      showOutcome(
-        ctx,
-        `Routing failed: ${normalizeError(error, 'Unable to check this area.').message} This is not evidence of no journey.`,
-      )
-    }
+    showRoutingError(ctx, error)
   } finally {
     if (controller === state.abortController) {
       state.abortController = null
