@@ -4,6 +4,10 @@ const TEST_INVENTORY_TSV = [
   'inventoryDate\t2026-11-20',
   'id\tkind\tname\tlatitude\tlongitude',
   '03218\tbus\tMarina Gardens Opp\t1.279100\t103.854000',
+  '11111\tbus\tRiver Homes\t1.300000\t103.850000',
+  '11112\tbus\tRiver Gardens\t1.300500\t103.850000',
+  '11113\tbus\tOver Cap Homes\t1.310000\t103.850000',
+  '11114\tbus\tUncovered Homes\t1.320000\t103.850000',
   '44009\tbus\tBukit Panjang Ring\t1.382000\t103.760000',
   '44011\tbus\tBlk 418 Fajar\t1.388000\t103.765000',
   '65009\tbus\tPunggol Temp Int\t1.403600\t103.902200',
@@ -17,6 +21,9 @@ const TEST_INVENTORY_TSV = [
 const TEST_NETWORK_TSV = [
   'networkDate\t2026-11-20',
   'service\tdirection\tvisits',
+  '11\t1\t11111 0530 2330 0530 2330 0530 2330|03218 0542 2342 0542 2342 0542 2342',
+  '12\t1\t11112 0530 2330 0530 2330 0530 2330|03218 0556 2356 0556 2356 0556 2356',
+  '13\t1\t11113 0530 2330 0530 2330 0530 2330|03218 0558 2358 0558 2358 0558 2358',
   '972\t1\t44009 0530 2330 0530 2330 0530 2330|03218 0552 2352 0552 2352 0552 2352',
   '922\t1\t44011 0530 2330 0530 2330 0530 2330|03218 0552 2352 0552 2352 0552 2352',
   '116\t1\t65009 0530 2330 0530 2330 0530 2330|03218 0552 2352 0552 2352 0552 2352',
@@ -29,46 +36,6 @@ const EMPTY_PNG = Buffer.from(
   'base64',
 )
 
-const sgtIsoMs = (clock: string): number =>
-  Date.parse(`2026-06-02T${clock}:00+08:00`)
-
-const makeItinerary = (
-  boardStopCode: string,
-  boardClock: string,
-  arriveClock: string,
-  services: readonly {
-    readonly mode: string
-    readonly routeShortName: string
-    readonly boardMs: number
-    readonly endMs: number
-  }[],
-  finalWalkMs = 0,
-) => {
-  const startTime = sgtIsoMs(boardClock)
-  const endTime = sgtIsoMs(arriveClock)
-  const legs: unknown[] = services.map((svc, idx) => ({
-    mode: svc.mode,
-    startTime: svc.boardMs,
-    endTime: svc.endMs,
-    from: { stopCode: idx === 0 ? boardStopCode : 'NS17' },
-    routeShortName: svc.routeShortName,
-    routeId: svc.routeShortName,
-  }))
-  if (finalWalkMs > 0 && services.length > 0) {
-    const lastEnd = services.at(-1)?.endMs ?? endTime - finalWalkMs
-    legs.push({
-      mode: 'WALK',
-      startTime: lastEnd,
-      endTime,
-    })
-  }
-  return {
-    startTime,
-    endTime,
-    walkLimitExceeded: false,
-    legs,
-  }
-}
 
 const fulfillJson = (route: Route, status: number, body: unknown) =>
   route.fulfill({
@@ -100,85 +67,6 @@ const stubTilesAndInventory = async (page: Page): Promise<void> => {
   )
 }
 
-const handlePostalSearchRoute = async (
-  route: Route,
-  pass2Gate: Promise<void>,
-  attemptsByStart: Map<string, number>,
-): Promise<void> => {
-  const url = new URL(route.request().url())
-  const start = url.searchParams.get('start') ?? ''
-  const attempt = (attemptsByStart.get(start) ?? 0) + 1
-  attemptsByStart.set(start, attempt)
-
-  if (attempt === 1 && start.startsWith('1.382')) {
-    await fulfillJson(route, 200, {
-      plan: {
-        itineraries: [
-          makeItinerary('44009', '08:25', '08:52', [
-            {
-              mode: 'BUS',
-              routeShortName: '972',
-              boardMs: sgtIsoMs('08:25'),
-              endMs: sgtIsoMs('08:52'),
-            },
-          ]),
-        ],
-      },
-    })
-    return
-  }
-
-  if (attempt === 1 && start.startsWith('1.388')) {
-    await fulfillJson(route, 200, {
-      plan: {
-        itineraries: [
-          makeItinerary('44011', '08:27', '08:55', [
-            {
-              mode: 'BUS',
-              routeShortName: '922',
-              boardMs: sgtIsoMs('08:27'),
-              endMs: sgtIsoMs('08:55'),
-            },
-          ]),
-        ],
-      },
-    })
-    return
-  }
-
-  if (attempt === 2 && start.startsWith('1.4036')) {
-    await pass2Gate
-    await fulfillJson(route, 200, {
-      plan: {
-        itineraries: [
-          makeItinerary(
-            '65009',
-            '08:25',
-            '08:58',
-            [
-              {
-                mode: 'BUS',
-                routeShortName: '116',
-                boardMs: sgtIsoMs('08:25'),
-                endMs: sgtIsoMs('08:38'),
-              },
-              {
-                mode: 'SUBWAY',
-                routeShortName: 'NS',
-                boardMs: sgtIsoMs('08:42'),
-                endMs: sgtIsoMs('08:54'),
-              },
-            ],
-            4 * 60_000,
-          ),
-        ],
-      },
-    })
-    return
-  }
-
-  await fulfillJson(route, 200, { plan: { itineraries: [] } })
-}
 
 const signInViaUi = async (page: Page): Promise<void> => {
   await page.fill('#onemap-email', 'commuter@example.com')
@@ -271,314 +159,192 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect.poll(() => lookupAttempts).toBe(2)
   })
 
-  test('streams distant-before-nearby patches, supports overlap/disconnected selection, and verifies station identity', async ({
-    page,
-    context,
+  test('previews without routing and selects the same area by keyboard and map', async ({
+    page, context,
   }) => {
-    test.setTimeout(60_000)
+    let routingCalls = 0
+    let postalLookups = 0
+    await context.route('**/api/public/routingsvc/route*', (route) => {
+      routingCalls += 1
+      return fulfillJson(route, 500, {})
+    })
+    page.on('request', (request) => {
+      if (request.url().includes('/api/common/elastic/search')) postalLookups += 1
+    })
     await page.clock.install({ time: new Date('2026-05-29T09:00:00+08:00') })
-
-    const pass2Gate = Promise.withResolvers<void>()
-    const postalAttempts = new Map<string, number>()
-
-    await context.route('**/api/public/routingsvc/route*', (route) =>
-      handlePostalSearchRoute(route, pass2Gate.promise, postalAttempts),
-    )
-
     await page.goto('/')
-
+    await expect(page.locator('#section-preview')).toBeHidden()
     await expect(page.locator('#signed-in-bar')).toBeHidden()
     await expect(page.locator('#station-field-group')).toBeHidden()
     await expect(page.locator('#stop-search-btn')).toBeHidden()
-    await expect(page.locator('#offline-banner')).toBeHidden()
     await expect(page.locator('#selected-stop-card')).toBeHidden()
-
-    // Verify pre-search Singapore date (Friday 2026-05-29 -> skips Sun/Mon Vesak holiday -> 2026-06-02),
-    // inventory date, and keep-open notice.
     await expect(page.locator('#planned-search-date')).toHaveText('2026-06-02')
-    await expect(page.locator('#planned-inventory-date')).toContainText(
-      '2026-11-20',
-    )
-    await expect(page.locator('.keep-open-notice')).toContainText(
-      'Keep the app open while searching. Closing it stops the search.',
-    )
-    await expect(page.locator('.map-legend')).toContainText(
-      'Within 500 m of a qualifying stop.',
-    )
-    await expect(page.locator('.map-legend')).toContainText(
-      'Straight-line proximity',
-    )
-
     await signInViaUi(page)
     await page.fill('#postal-input', '018989')
-    await page.fill('#office-start-input', '09:00')
-    await page.fill('#ride-cap-input', '40')
     await page.click('#start-search-btn')
-
-    // Mid-search assertions: pass 1 finished (3 reachable candidate stops tried, 88888 pruned),
-    // 2 distant overlapping stops matched, search is STILL running while pass 2 waits on 65009!
-    await expect(page.locator('#stops-tried-value')).toHaveText('3 / 9')
-    await expect(page.locator('#stops-matched-value')).toHaveText('2')
-    await expect(page.locator('#result-status-tag')).toContainText(
-      'Searching — Pass 2',
-    )
-    expect(postalAttempts.get('1.389,103.988')).toBeUndefined()
-    await expect(
-      page.locator('.stop-plaque-marker[data-stop-id="44009"]'),
-    ).toBeVisible()
-    await expect(
-      page.locator('.stop-plaque-marker[data-stop-id="44011"]'),
-    ).toBeVisible()
-
-    const zonePaneOpacity = await page
-      .locator('.leaflet-commuteZone-pane')
-      .evaluate((el) => getComputedStyle(el).opacity)
-    expect(zonePaneOpacity).toBe('0.34')
-    expect(
-      await page.locator('.leaflet-commuteZone-pane svg path').count(),
-    ).toBeGreaterThanOrEqual(2)
-
-    // Release pass 2 so 65009 (disconnected patch) qualifies and search completes.
-    pass2Gate.resolve()
-    await expect(page.locator('#result-status-tag')).toHaveText('Completed', {
-      timeout: 25_000,
-    })
-    await expect(page.locator('#stops-matched-value')).toHaveText('4')
-
-    // Select overlapping stop 44011 on the map and verify its journey card.
-    await page.click('.stop-plaque-marker[data-stop-id="44011"]')
-    await expect(page.locator('#selected-stop-card')).toBeVisible()
-    await expect(page.locator('#selected-stop-id')).toHaveText('44011')
-    await expect(page.locator('#selected-boarding-time')).toHaveText('08:27')
-    await expect(page.locator('#selected-arrival-time')).toHaveText('08:55')
-    await expect(page.locator('#selected-services')).toContainText('Bus 922')
-
-    // Select overlapping peer 44009 on the map.
-    await page.click('.stop-plaque-marker[data-stop-id="44009"]')
-    await expect(page.locator('#selected-stop-id')).toHaveText('44009')
-    await expect(page.locator('#selected-services')).toContainText('Bus 972')
-
-    // Select disconnected patch stop 65009 from the accessible list.
-    await page.click('.stop-row-btn[data-stop-id="65009"]')
-    await expect(page.locator('#selected-stop-id')).toHaveText('65009')
-    await expect(page.locator('#selected-boarding-time')).toHaveText('08:25')
-    await expect(page.locator('#selected-arrival-time')).toHaveText('08:58')
-    await expect(page.locator('#selected-services')).toContainText(
-      'Bus 116 → MRT NS',
-    )
-
-    // The same itinerary proves boarding at the transfer station after the bus.
-    await page.click('.stop-plaque-marker[data-stop-id="NS17"]')
-    await expect(page.locator('#selected-boarding-time')).toHaveText('08:42')
-    await expect(page.locator('#selected-arrival-time')).toHaveText('08:58')
-    await expect(page.locator('#selected-services')).toHaveText('MRT NS')
-
-    // Station workplace test: choose NS17, verify NS17 qualifies at 09:00 with 0 min ride & 0 routing calls,
-    // CC15 at the same point does NOT auto-qualify, and 65009 qualifies via bus+walk.
-    const routeRequestsToStationCoords: string[] = []
-    await context.unroute('**/api/public/routingsvc/route*')
-    await context.route('**/api/public/routingsvc/route*', (route) => {
-      const url = new URL(route.request().url())
-      const start = url.searchParams.get('start') ?? ''
-      const time = url.searchParams.get('time') ?? ''
-      if (start.startsWith('1.3514')) {
-        routeRequestsToStationCoords.push(`${start}@${time}`)
-      }
-      if (start.startsWith('1.4036')) {
-        return fulfillJson(route, 200, {
-          plan: {
-            itineraries: [
-              makeItinerary(
-                '65009',
-                '08:25',
-                '08:50',
-                [
-                  {
-                    mode: 'BUS',
-                    routeShortName: '50',
-                    boardMs: sgtIsoMs('08:25'),
-                    endMs: sgtIsoMs('08:45'),
-                  },
-                ],
-                5 * 60_000,
-              ),
-            ],
-          },
-        })
-      }
-      return fulfillJson(route, 200, { plan: { itineraries: [] } })
-    })
-
-    await page.click('input[name="workplace-kind"][value="station"]')
-    await page.selectOption('#station-select', 'NS17')
-    await page.click('#start-search-btn')
-
-    await expect(page.locator('#result-status-tag')).toHaveText('Completed', {
-      timeout: 25_000,
-    })
-    // Only CC15 queried once per candidate departure; NS17 made 0 routing requests.
-    const passCount = await page.locator('#stops-matched-value').textContent()
-    expect(passCount).toBe('2')
-    await expect(
-      page.locator('.stop-row-btn[data-stop-id="NS17"]'),
-    ).toBeVisible()
-    await expect(
-      page.locator('.stop-row-btn[data-stop-id="CC15"]'),
-    ).toHaveCount(0)
-    await expect(
-      page.locator('.stop-row-btn[data-stop-id="65009"]'),
-    ).toBeVisible()
-
-    // Select NS17 in accessible list and verify zero-ride identity evidence.
-    await page.click('.stop-row-btn[data-stop-id="NS17"]')
-    await expect(page.locator('#selected-ride-duration')).toHaveText('0 min')
-    await expect(page.locator('#selected-boarding-time')).toHaveText('09:00')
-    await expect(page.locator('#selected-arrival-time')).toHaveText('09:00')
-    // CC15 was queried while NS17 was never queried (every start@time at 1.3514 is unique).
-    expect(routeRequestsToStationCoords.length).toBeGreaterThanOrEqual(1)
-    expect(new Set(routeRequestsToStationCoords).size).toBe(
-      routeRequestsToStationCoords.length,
-    )
+    await expect(page.locator('#result-status-tag')).toHaveText('Estimated preview')
+    await expect(page.locator('#preview-summary')).toContainText('2 estimated stops')
+    await expect(page.locator('#preview-summary')).toContainText('1 at least 10 min below cap; 1 less than 10 min below')
+    await expect(page.locator('#preview-summary')).toContainText('No routing requests')
+    await expect(page.locator('#section-preview')).toContainText('not confidence scores')
+    await expect(page.locator('#stops-matched-value')).toHaveText('0')
+    await expect(page.locator('.stop-row-btn')).toHaveCount(0)
+    await expect(page.locator('#selected-stop-card')).toBeHidden()
+    await page.getByLabel('Find an area centre by stop name or ID').fill('11111')
+    await page.getByLabel('Centre the 500 m area on a stop').focus()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.locator('#area-summary')).toContainText('11111 River Homes: 2 estimated candidates')
+    await expect(page.locator('#area-summary')).toContainText('Not a walking route')
+    const map = page.locator('#map')
+    const box = await map.boundingBox()
+    if (!box) throw new Error('Map is not visible')
+    await map.click({ position: { x: box.width / 2, y: box.height / 2 } })
+    await expect(page.locator('#area-summary')).toContainText('Map point')
+    await expect(page.locator('#area-summary')).toContainText('2 estimated candidates')
+    await expect(page.locator('.leaflet-selection-pane path')).toHaveCount(1)
+    await expect(page.locator('.leaflet-commuteZone-pane path')).toHaveCount(0)
+    await page.fill('#area-stop-filter', 'Changi Village')
+    await page.selectOption('#area-stop-select', '88888')
+    await expect(page.locator('#area-summary')).toContainText('0 estimated candidates')
+    for (const stopId of ['11113', '11114', '44009']) {
+      await page.fill('#area-stop-filter', stopId)
+      await page.selectOption('#area-stop-select', stopId)
+      await expect(page.locator('#area-summary')).toContainText('0 estimated candidates')
+    }
+    expect(postalLookups).toBe(1)
+    expect(routingCalls).toBe(0)
   })
 
-  test('preserves last completed search across partial stop, close, and offline reload without sign-in', async ({
-    page,
-    context,
-  }) => {
-    test.setTimeout(60_000)
-    await page.clock.install({ time: new Date('2026-05-29T09:00:00+08:00') })
-    let failedFirstPunggolProbe = false
-    await context.route('**/api/public/routingsvc/route*', (route) => {
-      const url = new URL(route.request().url())
-      const start = url.searchParams.get('start') ?? ''
-      if (start.startsWith('1.4036')) {
-        if (!failedFirstPunggolProbe) {
-          failedFirstPunggolProbe = true
-          return fulfillJson(route, 400, { error: 'routing request failed' })
-        }
-        return fulfillJson(route, 200, {
-          plan: {
-            itineraries: [
-              makeItinerary('65009', '08:25', '08:52', [
-                {
-                  mode: 'BUS',
-                  routeShortName: '116',
-                  boardMs: sgtIsoMs('08:25'),
-                  endMs: sgtIsoMs('08:52'),
-                },
-              ]),
-            ],
-          },
-        })
-      }
-      return fulfillJson(route, 200, { plan: { itineraries: [] } })
-    })
-
+  test('keeps the stop picker and area count usable without a map on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/')
-    // Wait until the Service Worker has installed and controls the page for offline reload.
-    await page.evaluate(async () => {
-      await navigator.serviceWorker.ready
-    })
-    await page.reload()
-
-    // The 40-minute search radius includes the Punggol boarding in this saved result.
     await signInViaUi(page)
     await page.fill('#postal-input', '018989')
-    await page.fill('#office-start-input', '09:00')
-    await page.fill('#ride-cap-input', '40')
     await page.click('#start-search-btn')
-    await expect(page.locator('#result-status-tag')).toHaveText('Completed', {
-      timeout: 25_000,
-    })
-    await expect(page.locator('#search-error')).toBeHidden()
+    await expect(page.locator('#section-preview')).toBeVisible()
+    await expect(page.locator('#map')).toBeHidden()
+    await page.fill('#area-stop-filter', 'River Homes')
+    await page.locator('#area-stop-select').focus()
+    await page.keyboard.press('ArrowDown')
+    await expect(page.locator('#area-summary')).toContainText('2 estimated candidates')
+    await page.click('[data-mobile-tab="stops"]')
+    await expect(page.locator('#area-summary')).toBeVisible()
+  })
 
-    // Search B: start station search with a held request, then click Stop search -> Partial result.
-    await context.unroute('**/api/public/routingsvc/route*')
-    await context.route('**/api/public/routingsvc/route*', async (route) => {
-      await new Promise((resolve) => setTimeout(resolve, 250))
-      await fulfillJson(route, 200, { plan: { itineraries: [] } })
+  test('preserves only the exact destination station zero-ride exception', async ({ page, context }) => {
+    let routingCalls = 0
+    await context.route('**/api/public/routingsvc/route*', (route) => {
+      routingCalls += 1
+      return fulfillJson(route, 500, {})
     })
+    await page.goto('/')
+    await signInViaUi(page)
     await page.click('input[name="workplace-kind"][value="station"]')
     await page.selectOption('#station-select', 'NS17')
-    await page.fill('#office-start-input', '08:30')
-    await page.fill('#ride-cap-input', '15')
     await page.click('#start-search-btn')
-    await expect(page.locator('#stop-search-btn')).toBeVisible()
-    await page.click('#stop-search-btn')
-    await expect(page.locator('#result-status-tag')).toHaveText(
-      'Partial result',
-    )
+    await expect(page.locator('#result-status-tag')).toHaveText('Estimated preview')
+    await expect(page.locator('#stops-matched-value')).toHaveText('1')
+    await expect(page.locator('.stop-row-btn[data-stop-id="CC15"]')).toHaveCount(0)
+    await page.click('.stop-row-btn[data-stop-id="NS17"]')
+    await expect(page.locator('#selected-ride-duration')).toHaveText('0 min')
+    await expect(page.locator('#selected-arrival-time')).toHaveText('09:00')
+    await expect(page.locator('.leaflet-commuteZone-pane')).toHaveCSS('opacity', '0.34')
+    await expect(page.locator('.leaflet-commuteZone-pane path')).toHaveCount(1)
+    expect(routingCalls).toBe(0)
+    await page.fill('#ride-cap-input', '15')
+    await expect(page.locator('#section-preview')).toBeHidden()
+    await expect(page.locator('#selected-stop-card')).toBeHidden()
+    await expect(page.locator('.stop-row-btn')).toHaveCount(0)
+    await expect(page.locator('.leaflet-commuteZone-pane path')).toHaveCount(0)
+  })
 
-    // Go offline and reopen without signing in: Search A must be intact!
+  test('invalidates in-flight lookup on edits, stop, and disconnect', async ({ page, context }) => {
+    const lookupGate = Promise.withResolvers<void>()
+    let lookups = 0
+    await context.route('**/api/common/elastic/search*', async (route) => {
+      lookups += 1
+      await lookupGate.promise
+      await fulfillJson(route, 200, { results: [{
+        POSTAL: '018989', LATITUDE: '1.2789', LONGITUDE: '103.8536', ADDRESS: 'Marina Gardens',
+      }] })
+    })
+    await page.goto('/')
+    await signInViaUi(page)
+    await page.fill('#postal-input', '018989')
+    await page.click('#start-search-btn')
+    await expect.poll(() => lookups).toBe(1)
+    await page.fill('#office-start-input', '08:30')
+    await expect(page.locator('#stop-search-btn')).toBeHidden()
+    await expect(page.locator('#start-search-btn')).toBeEnabled()
+    await page.click('#start-search-btn')
+    await expect.poll(() => lookups).toBe(2)
+    await page.click('#stop-search-btn')
+    await page.click('#start-search-btn')
+    await expect.poll(() => lookups).toBe(3)
+    await page.click('#signout-btn')
+    lookupGate.resolve()
+    await expect(page.locator('#section-preview')).toBeHidden()
+    await expect(page.locator('#start-search-btn')).toBeDisabled()
+    await expect(page.locator('#result-status-tag')).not.toHaveText('Estimated preview')
+  })
+
+  test('retains an existing completed offline map through previews and interrupted lookup', async ({
+    page, context,
+  }) => {
+    // A previously completed result uses the unchanged v1 storage contract.
+    const saved = {
+      version: 1, completedAtIso: '2026-06-02T01:00:00Z', inventoryDate: '2026-11-20',
+      workplace: { kind: 'postal', postalCode: '018989', label: '18 MARINA GARDENS DR',
+        point: { latitude: 1.2789, longitude: 103.8536 } },
+      constraints: { searchDate: '2026-06-02', officeStart: '09:00', rideCapMinutes: 40 },
+      triedCount: 9, totalCount: 9,
+      matches: [{
+        stop: { id: '65009', kind: 'bus', name: 'Punggol Temp Int',
+          point: { latitude: 1.4036, longitude: 103.9022 } },
+        journey: { stopId: '65009', searchDate: '2026-06-02',
+          boardingAtMs: Date.parse('2026-06-02T08:25:00+08:00'),
+          arrivalAtMs: Date.parse('2026-06-02T08:52:00+08:00'),
+          rideMs: 27 * 60_000, services: [{ id: '116', name: '116', mode: 'BUS' }],
+          isAtDestination: false },
+      }],
+    }
+    await page.goto('/')
+    await page.evaluate(async (snapshot) => {
+      await navigator.serviceWorker.ready
+      localStorage.setItem('house-hunter:last-completed-result:v1', JSON.stringify(snapshot))
+    }, saved)
+    await page.reload()
+    await expect(page.locator('#result-status-tag')).toHaveText('Saved offline result')
+    await signInViaUi(page)
+    await page.fill('#postal-input', '018989')
+    await page.click('#start-search-btn')
+    await expect(page.locator('#result-status-tag')).toHaveText('Estimated preview')
+    await expect(page.locator('.stop-row-btn')).toHaveCount(0)
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('house-hunter:last-completed-result:v1') ?? 'null'))).toEqual(saved)
+    const lookupGate = Promise.withResolvers<void>()
+    let pending = false
+    await context.route('**/api/common/elastic/search*', async (route) => {
+      pending = true
+      await lookupGate.promise
+      await fulfillJson(route, 503, {})
+    })
+    await page.fill('#office-start-input', '08:30')
+    await page.click('#start-search-btn')
+    await expect.poll(() => pending).toBe(true)
+    await page.click('#stop-search-btn')
+    lookupGate.resolve()
     await context.setOffline(true)
     await page.reload()
-
     await expect(page.locator('#offline-banner')).toBeVisible()
     await expect(page.locator('#start-search-btn')).toBeDisabled()
-    await expect(page.locator('#account-status-pill')).toHaveText(
-      'Not connected',
-    )
-    await expect(page.locator('#result-status-tag')).toHaveText(
-      'Saved offline result',
-    )
-    await expect(page.locator('#active-constraints-summary')).toContainText(
-      'Postal 018989',
-    )
-    await expect(page.locator('#active-constraints-summary')).toContainText(
-      'Date 2026-06-02',
-    )
-    await expect(page.locator('#active-constraints-summary')).toContainText(
-      'Start 09:00',
-    )
-    await expect(page.locator('#active-constraints-summary')).toContainText(
-      'Ride cap 40 min',
-    )
-
-    // Verify map stop and accessible list both work offline without tiles or sign-in.
+    await expect(page.locator('#account-status-pill')).toHaveText('Not connected')
+    await expect(page.locator('#section-preview')).toBeHidden()
+    await expect(page.locator('#result-status-tag')).toHaveText('Saved offline result')
+    await expect(page.locator('#active-constraints-summary')).toContainText('Date 2026-06-02')
+    await expect(page.locator('#active-constraints-summary')).toContainText('Ride cap 40 min')
     await page.click('.stop-plaque-marker[data-stop-id="65009"]')
-    await expect(page.locator('#selected-stop-name')).toHaveText(
-      'Punggol Temp Int',
-    )
-    await expect(page.locator('#selected-services')).toContainText('Bus 116')
-    await expect(
-      page.locator('.stop-row-btn[data-stop-id="65009"]'),
-    ).toBeVisible()
-
-    // Neither closing a running search nor failed OneMap requests may replace Search A.
-    for (const interruption of ['reload', 'routing failure']) {
-      await context.setOffline(false)
-      await page.reload()
-      await signInViaUi(page)
-      if (interruption === 'routing failure') {
-        await context.route('**/api/public/routingsvc/route*', (route) =>
-          fulfillJson(route, 400, { error: 'upstream outage' }),
-        )
-      }
-      await page.click('input[name="workplace-kind"][value="station"]')
-      await page.selectOption('#station-select', 'NS17')
-      await page.click('#start-search-btn')
-      if (interruption === 'reload') {
-        await expect(page.locator('#stop-search-btn')).toBeVisible()
-      } else {
-        await expect(page.locator('#result-status-tag')).toHaveText(
-          'Partial result',
-          { timeout: 25_000 },
-        )
-        await expect(page.locator('#search-error')).toContainText(
-          'was not saved offline',
-        )
-      }
-      await context.setOffline(true)
-      await page.reload()
-      await expect(page.locator('#result-status-tag')).toHaveText(
-        'Saved offline result',
-      )
-      await expect(page.locator('#active-constraints-summary')).toContainText(
-        'Postal 018989',
-      )
-      await expect(
-        page.locator('.stop-row-btn[data-stop-id="65009"]'),
-      ).toBeVisible()
-    }
+    await expect(page.locator('#selected-stop-name')).toHaveText('Punggol Temp Int')
+    await expect(page.locator('#selected-services')).toHaveText('Bus 116')
+    await expect(page.locator('.stop-row-btn[data-stop-id="65009"]')).toBeVisible()
   })
 })

@@ -2,6 +2,7 @@
 
 ## 2026-11-26
 
+- Replace automatic global routing scans with a local, radius-limited estimated preview that pauses before routing. Distinguish ride-cap-margin time bands from qualifying journeys, support map or keyboard/mobile 500 m area selection, clear previews on changed inputs or session, and preserve the existing completed offline map. Area verification follows separately.
 - Limit direct OneMap requests to a straight-line radius based on the ride cap (13.7 km for 30 minutes). Keep qualifying stops outside the radius when an itinerary already proves them.
 - Skip redundant OneMap requests when an itinerary confirms pickup at an intermediate stop and the remaining journey meets the ride cap and arrival window.
 - Save a completed search offline when every stop with a failed routing request later has a confirmed journey. Unresolved failures still leave the previous offline result intact.

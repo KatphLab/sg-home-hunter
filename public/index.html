@@ -164,15 +164,15 @@
                 <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="1.75" />
                 <path d="M10 6v5m0 3h.01" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
               </svg>
-              <span>Keep the app open while searching. Closing it stops the search.</span>
+              <span>Preview estimates locally, then choose a neighbourhood. Estimates are not verified journeys.</span>
             </p>
 
             <div class="action-row">
               <button id="start-search-btn" type="submit" class="btn btn--primary" disabled>
-                Start search
+                Preview estimated stops
               </button>
               <button id="stop-search-btn" type="button" class="btn btn--danger" hidden>
-                Stop search
+                Stop preview
               </button>
             </div>
           </form>
@@ -194,14 +194,33 @@
               <strong id="stops-tried-value" class="ledger-value">0 / 0</strong>
             </div>
             <div class="ledger-cell">
-              <span class="ledger-label">Matching stops</span>
+              <span class="ledger-label">Qualifying stops</span>
               <strong id="stops-matched-value" class="ledger-value">0</strong>
             </div>
           </div>
 
           <p id="active-constraints-summary" class="constraints-summary tabular">
-            Run a search to map 500 m housing-search zones across Singapore.
+            Submit a workplace to preview estimated stops without routing requests.
           </p>
+        </section>
+
+        <section class="panel-section stack-sm" id="section-preview" aria-labelledby="heading-preview" hidden>
+          <h2 id="heading-preview">Choose a neighbourhood</h2>
+          <p id="preview-summary"></p>
+          <p class="field-hint">
+            Blue points: estimated ride at least 10 minutes below your cap.
+            Amber points: less than 10 minutes below. These are time bands, not confidence scores.
+            Estimates do not establish arrival times or housing-search zones.
+          </p>
+          <label class="field">
+            <span>Find an area centre by stop name or ID</span>
+            <input id="area-stop-filter" type="search" placeholder="Stop name or ID" />
+          </label>
+          <label class="field">
+            <span>Centre the 500 m area on a stop</span>
+            <select id="area-stop-select" size="4" aria-describedby="area-summary"></select>
+          </label>
+          <p id="area-summary" class="constraints-summary" role="status" aria-live="polite"></p>
         </section>
 
         <section class="panel-section stops-section" id="section-stops" aria-labelledby="heading-stops">
@@ -233,6 +252,18 @@
         <div id="map" class="map-canvas"></div>
 
         <aside class="map-legend" aria-label="Map legend">
+          <div class="legend-row">
+            <span class="legend-swatch legend-swatch--estimate-margin" aria-hidden="true"></span>
+            <span>Estimate: at least 10 min below cap</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-swatch legend-swatch--estimate-near" aria-hidden="true"></span>
+            <span>Estimate: less than 10 min below cap</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-swatch legend-swatch--selection" aria-hidden="true"></span>
+            <span>Selected 500 m area (not verified)</span>
+          </div>
           <div class="legend-row">
             <span class="legend-swatch legend-swatch--zone" aria-hidden="true"></span>
             <strong class="legend-title">Within 500 m of a qualifying stop.</strong>
