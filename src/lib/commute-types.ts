@@ -84,4 +84,3 @@ export interface OneMapAccount {
   readonly accessToken: string
   readonly expiryTimestamp: number
 }
-
