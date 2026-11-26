@@ -1,23 +1,19 @@
-import { runBackwardCommuteSearch } from '@lib/backward-search.js'
+import { createDestinationStationJourney } from '@lib/commute-rules.js'
 import type {
   CompletedSearchSnapshot,
+  Coordinates,
   OneMapAccount,
   QualifiedStop,
-  SearchConstraints,
-  SearchProgress,
-  SearchRunResult,
   StopInventory,
   Workplace,
 } from '@lib/commute-types.js'
 import { findRailStationById, validatePostalCode } from '@lib/inventory.js'
 import type { StopListKindFilter } from '@lib/journey-format.js'
 import {
-  fetchTransitPlan,
   OneMapAuthError,
   resolvePostalWorkplace,
   signInToOneMap,
 } from '@lib/onemap-client.js'
-import { saveCompletedResult } from '@lib/saved-result-store.js'
 import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
 import { normalizeError } from '@utils/guards.js'
 import {
@@ -30,11 +26,16 @@ import {
   renderInlineError,
   renderQualifyingStopsList,
   renderSelectedStopCard,
+  renderStationOptions,
   renderStatusBadge,
 } from './dom-render.js'
 import type { CommuteMapView } from './map-view.js'
 import { planInWorker } from './plan-in-worker.js'
-import type { PlannerRequest } from './planner-worker.js'
+import {
+  candidatesWithinArea,
+  createNeighbourhoodPreview,
+  type NeighbourhoodPreview,
+} from './neighbourhood-preview.js'
 
 export interface AppState {
   inventory: StopInventory | null
@@ -47,6 +48,8 @@ export interface AppState {
   textFilter: string
   isSearching: boolean
   abortController: AbortController | null
+  preview: NeighbourhoodPreview | null
+  selectedArea: Coordinates | null
 }
 
 export interface AppContext {
@@ -154,91 +157,6 @@ const resolveWorkplaceFromForm = (
   return resolvePostalWorkplace(postalCode, account.accessToken)
 }
 
-const applyProgress = (ctx: AppContext, progress: SearchProgress): void => {
-  const { els, mapView, state } = ctx
-  const previousCount = state.matches.length
-  state.matches = progress.matches
-  for (const match of progress.matches.slice(previousCount)) {
-    mapView.addQualifyingStop(match)
-  }
-  renderStatusBadge(
-    els.resultStatusTag,
-    'running',
-    progress.passNumber,
-    progress.totalPasses,
-  )
-  renderCounters(
-    els,
-    progress.triedCount,
-    progress.totalCount,
-    progress.matchedCount,
-  )
-  els.liveStatusRegion.textContent = `Pass ${String(progress.passNumber)} of ${String(progress.totalPasses)}: ${String(progress.triedCount)} of ${String(progress.totalCount)} stops tried, ${String(progress.matchedCount)} matching.`
-  if (progress.matchedCount !== previousCount) {
-    refreshStopList(ctx)
-  }
-}
-
-const finalizeSearchRun = (
-  ctx: AppContext,
-  inventory: StopInventory,
-  workplace: Workplace,
-  constraints: SearchConstraints,
-  result: SearchRunResult,
-): void => {
-  const { els, mapView, state } = ctx
-  state.isSearching = false
-  state.abortController = null
-  state.matches = result.matches
-  els.stopSearchButton.hidden = true
-  syncConnectivity(ctx)
-
-  renderCounters(
-    els,
-    result.triedCount,
-    result.totalCount,
-    result.matches.length,
-  )
-  renderStatusBadge(els.resultStatusTag, result.status)
-
-  if (result.matches.length > 0) {
-    mapView.fitToMatches(workplace, result.matches)
-  }
-
-  if (result.authExpired) {
-    state.account = null
-    syncAccountUi(ctx)
-    renderInlineError(
-      els.authError,
-      'Your OneMap session expired. Sign in again to continue.',
-    )
-  }
-
-  if (
-    result.status === 'partial' &&
-    result.failedQueries > 0 &&
-    !result.authExpired
-  ) {
-    const noun = result.failedQueries === 1 ? 'request' : 'requests'
-    renderInlineError(
-      els.searchError,
-      `${String(result.failedQueries)} OneMap routing ${noun} failed, so this result is partial and was not saved offline.`,
-    )
-  }
-
-  if (result.status === 'completed') {
-    saveCompletedResult(window.localStorage, {
-      version: 1,
-      completedAtIso: new Date().toISOString(),
-      inventoryDate: inventory.inventoryDate,
-      workplace,
-      constraints,
-      triedCount: result.triedCount,
-      totalCount: result.totalCount,
-      matches: result.matches,
-    })
-  }
-}
 
 export const handleSignIn = async (ctx: AppContext): Promise<void> => {
   const { els, state } = ctx
@@ -263,135 +181,171 @@ export const handleSignIn = async (ctx: AppContext): Promise<void> => {
 }
 
 export const handleSignOut = (ctx: AppContext): void => {
+  invalidatePreview(ctx)
   ctx.state.account = null
   syncAccountUi(ctx)
 }
 
 export const stopActiveSearch = (ctx: AppContext): void => {
-  ctx.state.abortController?.abort()
+  invalidatePreview(ctx)
 }
 
-const beginSearch = async (
-  ctx: AppContext,
-  request: PlannerRequest,
-  controller: AbortController,
-) => {
-  const { els, mapView, state } = ctx
-  const { workplace, constraints } = request
-  state.abortController = controller
-  state.workplace = workplace
-  state.matches = []
-  els.stopSearchButton.hidden = false
-  mapView.clearStops()
-  mapView.setWorkplace(workplace)
-  renderConstraintsSummary(
-    els,
-    workplace,
-    constraints.searchDate,
-    constraints.officeStart,
-    constraints.rideCapMinutes,
+export const refreshAreaStopPicker = (ctx: AppContext): void => {
+  const { els, state } = ctx
+  const query = els.areaStopFilter.value.trim().toLowerCase()
+  const stops = (state.inventory?.stops ?? []).filter((stop) =>
+    `${stop.id} ${stop.name}`.toLowerCase().includes(query),
   )
-  selectStop(ctx, null)
-  renderStatusBadge(els.resultStatusTag, 'planning')
-  els.liveStatusRegion.textContent = 'Planning departure times.'
-  renderCounters(els, 0, request.inventory.stops.length, 0)
-  try {
-    return await planInWorker(request, controller.signal)
-  } catch (error) {
-    renderInlineError(
-      els.searchError,
-      `Could not plan departures: ${normalizeError(error, 'Planner unavailable').message}`,
-    )
-    return null
+  renderStationOptions(els.areaStopSelect, stops, '')
+  els.areaStopSelect.selectedIndex = -1
+}
+
+export const selectArea = (
+  ctx: AppContext,
+  centre: Coordinates,
+  label: string,
+  focus = false,
+): void => {
+  const { els, mapView, state } = ctx
+  if (!state.preview) {
+    return
   }
+  state.selectedArea = centre
+  const count = candidatesWithinArea(state.preview, centre).length
+  mapView.setAreaSelection(centre, focus)
+  els.areaSummary.textContent = `${label}: ${String(count)} estimated candidates within 500 m straight-line distance. Not a walking route; estimates are not verified journeys.`
+}
+
+export const invalidatePreview = (ctx: AppContext): void => {
+  const { els, mapView, state } = ctx
+  const wasActive = state.preview !== null || state.isSearching
+  state.abortController?.abort()
+  state.abortController = null
+  state.isSearching = false
+  state.preview = null
+  state.selectedArea = null
+  els.previewPanel.hidden = true
+  els.stopSearchButton.hidden = true
+  mapView.clearPreview()
+  if (wasActive) {
+    state.workplace = null
+    state.matches = []
+    mapView.clearStops()
+    mapView.setWorkplace(null)
+    selectStop(ctx, null)
+    renderCounters(els, 0, 0, 0)
+    renderStatusBadge(els.resultStatusTag, 'idle')
+    els.activeConstraintsSummary.textContent = 'Submit the current workplace and constraints to preview estimates.'
+    els.liveStatusRegion.textContent = 'Preview cleared.'
+  }
+  syncConnectivity(ctx)
+}
+
+const displayPreview = (
+  ctx: AppContext,
+  preview: NeighbourhoodPreview,
+): void => {
+  const { els, mapView, state } = ctx
+  state.preview = preview
+  state.workplace = preview.workplace
+  state.matches = []
+  mapView.clearStops()
+  mapView.setWorkplace(preview.workplace)
+  mapView.setPreview(preview.leads, preview.constraints.rideCapMinutes)
+  if (preview.workplace.kind === 'station' && state.inventory) {
+    const station = findRailStationById(state.inventory, preview.workplace.stationId)
+    if (station) {
+      const match = {
+        stop: station,
+        journey: createDestinationStationJourney(
+          station, preview.constraints.searchDate, preview.constraints.officeStart,
+        ),
+      }
+      state.matches = [match]
+      mapView.addQualifyingStop(match)
+    }
+  }
+  renderConstraintsSummary(
+    els, preview.workplace, preview.constraints.searchDate,
+    preview.constraints.officeStart, preview.constraints.rideCapMinutes,
+  )
+  renderCounters(els, 0, 0, state.matches.length)
+  selectStop(ctx, null)
+  els.resultStatusTag.textContent = 'Estimated preview'
+  els.resultStatusTag.className = 'status-tag status-tag--muted'
+  const marginCount = preview.leads.filter(
+    (lead) => preview.constraints.rideCapMinutes * 60_000 - lead.estRideMs >= 600_000,
+  ).length
+  els.previewSummary.textContent = `${String(preview.leads.length)} estimated stops: ${String(marginCount)} at least 10 min below cap; ${String(preview.leads.length - marginCount)} less than 10 min below. No routing requests made.`
+  els.liveStatusRegion.textContent = els.previewSummary.textContent
+  els.areaSummary.textContent = 'Choose a stop below or click the map to select a 500 m area.'
+  els.areaStopFilter.value = ''
+  refreshAreaStopPicker(ctx)
+  els.previewPanel.hidden = false
 }
 
 export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   const { els, state } = ctx
-  if (
-    !state.inventory ||
-    state.networkText === null ||
-    !state.account ||
-    state.isSearching
-  ) {
+  const { inventory, networkText, account } = state
+  if (!inventory || networkText === null || !account || state.isSearching) {
     return
   }
+  invalidatePreview(ctx)
   renderInlineError(els.searchError, null)
   const rideCapMinutes = Number(els.rideCapInput.value)
   const officeStart = els.officeStartInput.value
-  if (
-    !Number.isInteger(rideCapMinutes) ||
-    rideCapMinutes < 1 ||
-    rideCapMinutes > 180
-  ) {
-    renderInlineError(
-      els.searchError,
-      'Ride cap must be a whole number between 1 and 180 minutes.',
-    )
+  if (!Number.isInteger(rideCapMinutes) || rideCapMinutes < 1 || rideCapMinutes > 180) {
+    renderInlineError(els.searchError, 'Ride cap must be a whole number between 1 and 180 minutes.')
     return
   }
-
-  const searchDate = getDefaultSearchDate(Date.now())
-  els.plannedSearchDate.textContent = searchDate
-
+  const constraints = {
+    searchDate: getDefaultSearchDate(Date.now()), officeStart, rideCapMinutes,
+  }
+  els.plannedSearchDate.textContent = constraints.searchDate
+  const controller = new AbortController()
+  state.abortController = controller
   state.isSearching = true
   syncConnectivity(ctx)
-
-  let workplace: Workplace
+  els.stopSearchButton.hidden = false
   try {
-    workplace = await resolveWorkplaceFromForm(
-      els,
-      state.inventory,
-      state.account,
-    )
-  } catch (error) {
-    state.isSearching = false
-    if (error instanceof OneMapAuthError) {
-      state.account = null
-      syncAccountUi(ctx)
-      renderInlineError(els.authError, error.message)
+    const workplace = await resolveWorkplaceFromForm(els, inventory, account)
+    if (controller !== state.abortController) {
       return
     }
-    syncConnectivity(ctx)
-    renderInlineError(
-      els.searchError,
-      normalizeError(error, 'Unable to resolve workplace.').message,
+    state.matches = []
+    mapViewForPlanning(ctx, workplace)
+    const plan = await planInWorker(
+      { inventory, networkText, workplace, constraints }, controller.signal,
     )
-    return
+    if (controller === state.abortController && plan) {
+      displayPreview(ctx, createNeighbourhoodPreview(plan, workplace, constraints))
+    }
+  } catch (error) {
+    if (controller !== state.abortController) {
+      return
+    }
+    if (error instanceof OneMapAuthError) {
+      state.account = null
+      renderInlineError(els.authError, error.message)
+      syncAccountUi(ctx)
+    } else {
+      renderInlineError(els.searchError, normalizeError(error, 'Unable to prepare preview.').message)
+    }
+  } finally {
+    if (controller === state.abortController) {
+      state.isSearching = false
+      state.abortController = null
+      els.stopSearchButton.hidden = true
+      syncConnectivity(ctx)
+    }
   }
+}
 
-  const controller = new AbortController()
-  const constraints = { searchDate, officeStart, rideCapMinutes }
-  const account = state.account
-  const plan = await beginSearch(
-    ctx,
-    {
-      inventory: state.inventory,
-      networkText: state.networkText,
-      workplace,
-      constraints,
-    },
-    controller,
-  )
-  const result = await runBackwardCommuteSearch({
-    inventory: state.inventory,
-    plan,
-    workplace,
-    constraints,
-    signal: controller.signal,
-    routeStop: async (stop, departureTimeHHMMSS, signal) => {
-      const plan = await fetchTransitPlan({
-        start: stop.point,
-        end: workplace.point,
-        searchDate,
-        departureTimeHHMMSS,
-        accessToken: account.accessToken,
-        signal,
-      })
-      return plan.itineraries
-    },
-    onProgress: (progress) => applyProgress(ctx, progress),
-  })
-
-  finalizeSearchRun(ctx, state.inventory, workplace, constraints, result)
+const mapViewForPlanning = (ctx: AppContext, workplace: Workplace): void => {
+  ctx.mapView.clearStops()
+  ctx.mapView.setWorkplace(workplace)
+  selectStop(ctx, null)
+  renderCounters(ctx.els, 0, 0, 0)
+  renderStatusBadge(ctx.els.resultStatusTag, 'planning')
+  ctx.els.liveStatusRegion.textContent = 'Planning local estimates. No routing requests.'
 }

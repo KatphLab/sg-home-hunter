@@ -919,3 +919,23 @@ select {
 html [hidden] {
   display: none;
 }
+
+.legend-swatch--estimate-margin {
+  background: #2459a6;
+  border-radius: 50%;
+}
+
+.legend-swatch--estimate-near {
+  background: #a65c00;
+  border-radius: 50%;
+}
+
+.legend-swatch--selection {
+  border: 2px dashed #343c46;
+  background: transparent;
+}
+
+#area-stop-select {
+  width: 100%;
+  min-height: 7rem;
+}

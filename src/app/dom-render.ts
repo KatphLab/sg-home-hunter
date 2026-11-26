@@ -79,6 +79,11 @@ export interface AppElements {
   readonly selectedJourneyDisclaimer: HTMLElement
   readonly closeJourneyCardButton: HTMLButtonElement
   readonly mobileStopsCount: HTMLElement
+  readonly previewPanel: HTMLElement
+  readonly previewSummary: HTMLElement
+  readonly areaStopFilter: HTMLInputElement
+  readonly areaStopSelect: HTMLSelectElement
+  readonly areaSummary: HTMLElement
 }
 
 export const collectAppElements = (): AppElements => ({
@@ -142,6 +147,11 @@ export const collectAppElements = (): AppElements => ({
     HTMLButtonElement,
   ),
   mobileStopsCount: requireElement('mobile-stops-count'),
+  previewPanel: requireElement('section-preview'),
+  previewSummary: requireElement('preview-summary'),
+  areaStopFilter: requireElementOfType('area-stop-filter', HTMLInputElement),
+  areaStopSelect: requireElementOfType('area-stop-select', HTMLSelectElement),
+  areaSummary: requireElement('area-summary'),
 })
 
 export const renderStationOptions = (

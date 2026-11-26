@@ -18,7 +18,10 @@ import {
   handleSearchSubmit,
   handleSignIn,
   handleSignOut,
+  invalidatePreview,
+  refreshAreaStopPicker,
   refreshStopList,
+  selectArea,
   selectStop,
   stopActiveSearch,
   syncAccountUi,
@@ -28,6 +31,17 @@ import {
 const wireUiEvents = (ctx: AppContext): void => {
   const { els, mapView, state } = ctx
 
+  els.searchForm.addEventListener('input', () => invalidatePreview(ctx))
+  els.searchForm.addEventListener('change', () => invalidatePreview(ctx))
+  els.areaStopFilter.addEventListener('input', () => refreshAreaStopPicker(ctx))
+  els.areaStopSelect.addEventListener('change', () => {
+    const stop = state.inventory?.stops.find(
+      (entry) => entry.id === els.areaStopSelect.value,
+    )
+    if (stop) {
+      selectArea(ctx, stop.point, `${stop.id} ${stop.name}`, true)
+    }
+  })
   for (const radio of document.querySelectorAll<HTMLInputElement>(
     'input[name="workplace-kind"]',
   )) {
@@ -111,14 +125,28 @@ const bootstrap = async (): Promise<void> => {
     textFilter: '',
     isSearching: false,
     abortController: null,
+    preview: null,
+    selectedArea: null,
   }
 
   let ctx: AppContext | null = null
-  const mapView = new CommuteMapView(els.mapContainer, (stopId) => {
-    if (ctx) {
-      selectStop(ctx, stopId)
-    }
-  })
+  const mapView = new CommuteMapView(
+    els.mapContainer,
+    (stopId) => {
+      if (ctx) {
+        selectStop(ctx, stopId)
+      }
+    },
+    (point) => {
+      if (ctx) {
+        selectArea(
+          ctx,
+          point,
+          `Map point ${point.latitude.toFixed(5)}, ${point.longitude.toFixed(5)}`,
+        )
+      }
+    },
+  )
   ctx = { els, mapView, state }
 
   wireUiEvents(ctx)
