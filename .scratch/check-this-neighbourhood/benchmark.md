@@ -8,20 +8,20 @@ Fixed constraints: workplace **828608**, search date **2026-11-27**, office star
 
 Each circle uses 500 m straight-line distance, not walking distance. Substantial margin means its best estimated lead is at most 20 minutes; near-cap means its best is over 20 and at most 30 minutes. Few-candidate areas have at most six leads, including zero. These are area strata based on summaries, not assertions that every departure achieves that time.
 
-| ID | Stratum | Residential centre | Latitude | Longitude | Estimated candidates | Planned probes | Best estimated ride (min) |
-|---|---|---|---:|---:|---:|---:|---:|
-| M1 | Substantial margin | Punggol Northshore residences | 1.4185 | 103.9020 | 9 | 36 | 1.15 |
-| M2 | Substantial margin | Punggol Edgedale Plains homes | 1.4005 | 103.9120 | 13 | 52 | 1.84 |
-| M3 | Substantial margin | Sengkang Rivervale homes | 1.3910 | 103.9050 | 20 | 80 | 3.45 |
-| M4 | Substantial margin | Hougang Avenue 8 homes | 1.3760 | 103.8910 | 21 | 84 | 8.89 |
-| N1 | Near cap | Ang Mo Kio Avenue 10 homes | 1.3680 | 103.8560 | 7 | 28 | 23.23 |
-| N2 | Near cap | Bishan Street 22 homes | 1.3580 | 103.8460 | 8 | 32 | 24.23 |
-| N3 | Near cap | Tampines Street 43 homes | 1.3590 | 103.9510 | 8 | 32 | 23.60 |
-| N4 | Near cap | Pasir Ris Drive 4 homes | 1.3690 | 103.9590 | 5 | 20 | 25.42 |
-| F1 | Few candidates | Kovan Highland Road homes | 1.3630 | 103.8810 | 0 | 0 | — |
-| F2 | Few candidates | Sembawang Hills homes | 1.3760 | 103.8310 | 0 | 0 | — |
-| F3 | Few candidates | Lorong Ah Soo homes | 1.3510 | 103.8850 | 6 | 24 | 16.43 |
-| F4 | Few candidates | Tampines Street 21 homes | 1.3520 | 103.9500 | 5 | 20 | 23.60 |
+| ID  | Stratum            | Residential centre            | Latitude | Longitude | Estimated candidates | Planned probes | Best estimated ride (min) |
+| --- | ------------------ | ----------------------------- | -------: | --------: | -------------------: | -------------: | ------------------------: |
+| M1  | Substantial margin | Punggol Northshore residences |   1.4185 |  103.9020 |                    9 |             36 |                      1.15 |
+| M2  | Substantial margin | Punggol Edgedale Plains homes |   1.4005 |  103.9120 |                   13 |             52 |                      1.84 |
+| M3  | Substantial margin | Sengkang Rivervale homes      |   1.3910 |  103.9050 |                   20 |             80 |                      3.45 |
+| M4  | Substantial margin | Hougang Avenue 8 homes        |   1.3760 |  103.8910 |                   21 |             84 |                      8.89 |
+| N1  | Near cap           | Ang Mo Kio Avenue 10 homes    |   1.3680 |  103.8560 |                    7 |             28 |                     23.23 |
+| N2  | Near cap           | Bishan Street 22 homes        |   1.3580 |  103.8460 |                    8 |             32 |                     24.23 |
+| N3  | Near cap           | Tampines Street 43 homes      |   1.3590 |  103.9510 |                    8 |             32 |                     23.60 |
+| N4  | Near cap           | Pasir Ris Drive 4 homes       |   1.3690 |  103.9590 |                    5 |             20 |                     25.42 |
+| F1  | Few candidates     | Kovan Highland Road homes     |   1.3630 |  103.8810 |                    0 |              0 |                         — |
+| F2  | Few candidates     | Sembawang Hills homes         |   1.3760 |  103.8310 |                    0 |              0 |                         — |
+| F3  | Few candidates     | Lorong Ah Soo homes           |   1.3510 |  103.8850 |                    6 |             24 |                     16.43 |
+| F4  | Few candidates     | Tampines Street 21 homes      |   1.3520 |  103.9500 |                    5 |             20 |                     23.60 |
 
 Queue: filter `planBackwardLeads` to `estRideMs <= 30 minutes`, workplace distance <=13,700 m and centre distance <=500 m. Sort by estimated ride ascending, stable stop ID ascending; interleave each stop's first departure, then second, preserving planner departure order. No uncovered-stop fallback or hint sweep. Use `fetchTransitPlan` unchanged, including existing transport retry policy; count every fetch invocation as an HTTP attempt. Use `evaluateBoardings` unchanged and inventory stop identity to retain all proven boardings, including transfers/intermediates. Only proof within the selected circle succeeds. Hints alone are not proof.
 
@@ -35,20 +35,20 @@ Preparation completed at **18:45:29 Singapore**. Routing ran **18:46:39–18:47:
 
 **8/12 areas (66.7%) confirmed within the initial three-probe budget**, or **8/10 (80%) among areas with estimated candidates**. All eight confirmed on their **first logical probe / first routing HTTP attempt**; none needed probes two or three. By stratum: substantial margin **4/4**, near-cap **3/4**, few candidates **1/4** (two had no candidates). No area succeeded through reused proof, so these confirmations are not inflated by a warmed proof store.
 
-| Area | Initial probes / HTTP attempts | Additional probes / HTTP attempts | Result | Untried planned probes at stop |
-|---|---:|---:|---|---:|
-| M1 | 1 / 1 | 0 / 0 | Confirmed | 35 |
-| M2 | 1 / 1 | 0 / 0 | Confirmed at another actual boarding | 51 |
-| M3 | 1 / 1 | 0 / 0 | Confirmed | 79 |
-| M4 | 1 / 1 | 0 / 0 | Confirmed | 83 |
-| N1 | 1 / 1 | 0 / 0 | Confirmed | 27 |
-| N2 | 1 / 1 | 0 / 0 | Confirmed | 31 |
-| N3 | 3 / 3 | 3 / 3 | Not confirmed in six; inconclusive | 26 |
-| N4 | 1 / 1 | 0 / 0 | Confirmed | 19 |
-| F1 | 0 / 0 | 0 / 0 | No estimated candidates; no routing | 0 |
-| F2 | 0 / 0 | 0 / 0 | No estimated candidates; no routing | 0 |
-| F3 | 1 / 1 | 0 / 0 | Confirmed | 23 |
-| F4 | 3 / 3 | 3 / 3 | Not confirmed in six; inconclusive | 14 |
+| Area | Initial probes / HTTP attempts | Additional probes / HTTP attempts | Result                               | Untried planned probes at stop |
+| ---- | -----------------------------: | --------------------------------: | ------------------------------------ | -----------------------------: |
+| M1   |                          1 / 1 |                             0 / 0 | Confirmed                            |                             35 |
+| M2   |                          1 / 1 |                             0 / 0 | Confirmed at another actual boarding |                             51 |
+| M3   |                          1 / 1 |                             0 / 0 | Confirmed                            |                             79 |
+| M4   |                          1 / 1 |                             0 / 0 | Confirmed                            |                             83 |
+| N1   |                          1 / 1 |                             0 / 0 | Confirmed                            |                             27 |
+| N2   |                          1 / 1 |                             0 / 0 | Confirmed                            |                             31 |
+| N3   |                          3 / 3 |                             3 / 3 | Not confirmed in six; inconclusive   |                             26 |
+| N4   |                          1 / 1 |                             0 / 0 | Confirmed                            |                             19 |
+| F1   |                          0 / 0 |                             0 / 0 | No estimated candidates; no routing  |                              0 |
+| F2   |                          0 / 0 |                             0 / 0 | No estimated candidates; no routing  |                              0 |
+| F3   |                          1 / 1 |                             0 / 0 | Confirmed                            |                             23 |
+| F4   |                          3 / 3 |                             3 / 3 | Not confirmed in six; inconclusive   |                             14 |
 
 Totals: **14 initial logical probes / 14 routing HTTP attempts**, followed by **6 additional probes / 6 attempts**. **20 routing HTTP attempts**, all HTTP 200, **zero transport retries, request failures, parsing/qualification exceptions, auth expiry or timeouts**. Preparation used one sign-in and one postal lookup; measurement used another sign-in, so **23 total OneMap HTTP calls including three non-routing calls**. Valid responses on both candidate-bearing misses contained proof outside their circles, not in-area proof; these were not errors or empty “no route” responses.
 
@@ -58,16 +58,16 @@ Totals: **14 initial logical probes / 14 routing HTTP attempts**, followed by **
 
 All times below are Singapore time on **2026-11-27**. Arrival is at the resolved workplace, **including the final walk**. Ride is total time aboard, not elapsed journey duration; transfer wait and walking explain differences between boarding-to-arrival and ride duration. These actual journeys must not be reconstructed from unrelated planner summary fields.
 
-| Area | Requested stop @ departure | Proven boarding (ID; name) | Actual boarding | Workplace arrival | Ride (min) | Services |
-|---|---|---|---|---|---:|---|
-| M1 | 65629 @ 08:01:50 | 65629; Samudera Stn Exit A | 08:04:56 | 08:17:22 | 7.78 | 84G |
-| M2 | PE6 @ 08:00:20 | 65311; Oasis Stn Exit B/Blk 617D | 08:08:53 | 08:21:06 | 5.32 | 381 |
-| M3 | 65191 @ 07:43:26 | 65191; Bef Punggol Rd | 07:53:23 | 08:17:53 | 10.28 | 118 → NE |
-| M4 | NE14 @ 08:03:46 | NE14; Hougang | 08:06:14 | 08:23:53 | 8.88 | NE |
-| N1 | 54291 @ 07:33:13 | 54291; Blk 564 | 07:38:20 | 08:17:53 | 25.43 | 165 → NE |
-| N2 | 53241 @ 07:41:03 | 53241; Opp Blk 217 | 07:41:04 | 08:23:53 | 22.93 | 55 → CC → NE |
-| N4 | 77051 @ 07:19:34 | 77051; Blk 115 | 07:43:24 | 08:29:53 | 24.82 | 109 → 39A → NE |
-| F3 | 63299 @ 07:47:29 | 63299; Blk 115 | 07:50:01 | 08:23:53 | 18.97 | 113 → NE |
+| Area | Requested stop @ departure | Proven boarding (ID; name)       | Actual boarding | Workplace arrival | Ride (min) | Services       |
+| ---- | -------------------------- | -------------------------------- | --------------- | ----------------- | ---------: | -------------- |
+| M1   | 65629 @ 08:01:50           | 65629; Samudera Stn Exit A       | 08:04:56        | 08:17:22          |       7.78 | 84G            |
+| M2   | PE6 @ 08:00:20             | 65311; Oasis Stn Exit B/Blk 617D | 08:08:53        | 08:21:06          |       5.32 | 381            |
+| M3   | 65191 @ 07:43:26           | 65191; Bef Punggol Rd            | 07:53:23        | 08:17:53          |      10.28 | 118 → NE       |
+| M4   | NE14 @ 08:03:46            | NE14; Hougang                    | 08:06:14        | 08:23:53          |       8.88 | NE             |
+| N1   | 54291 @ 07:33:13           | 54291; Blk 564                   | 07:38:20        | 08:17:53          |      25.43 | 165 → NE       |
+| N2   | 53241 @ 07:41:03           | 53241; Opp Blk 217               | 07:41:04        | 08:23:53          |      22.93 | 55 → CC → NE   |
+| N4   | 77051 @ 07:19:34           | 77051; Blk 115                   | 07:43:24        | 08:29:53          |      24.82 | 109 → 39A → NE |
+| F3   | 63299 @ 07:47:29           | 63299; Blk 115                   | 07:50:01        | 08:23:53          |      18.97 | 113 → NE       |
 
 M2 demonstrates why response boarding identity matters: requesting Oasis rail station returned qualifying **bus stop 65311**, inside the circle. Proof from the whole response was retained in memory (23 distinct inventory boardings across the run), but outside-circle proof never stopped a missed area's queue. No intermediate hint was routed.
 

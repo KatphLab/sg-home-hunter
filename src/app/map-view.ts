@@ -99,6 +99,7 @@ export class CommuteMapView {
     this.map.on('click', (event: L.LeafletMouseEvent) =>
       onSelectArea({ latitude: event.latlng.lat, longitude: event.latlng.lng }),
     )
+    new ResizeObserver(() => this.invalidateSize()).observe(container)
   }
 
   private setupBaseLayers(): void {
@@ -296,6 +297,7 @@ export class CommuteMapView {
     this.map.fitBounds(L.latLngBounds(points), {
       padding: [40, 40],
       maxZoom: 15,
+      animate: false,
     })
   }
 }

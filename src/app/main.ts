@@ -1,14 +1,13 @@
 import { filterRailStations, parseStopInventory } from '@lib/inventory.js'
 import { loadCompletedResult } from '@lib/saved-result-store.js'
-import { getDefaultSearchDate } from '@lib/singapore-calendar.js'
 import { normalizeError } from '@utils/guards.js'
 import { checkSelectedArea } from './area-check.js'
 import { applySnapshot } from './area-result.js'
 import {
   collectAppElements,
   getSelectedWorkplaceKind,
+  renderCommuteHint,
   renderInlineError,
-  renderInventorySummary,
   renderStationOptions,
   setMobileView,
 } from './dom-render.js'
@@ -32,6 +31,17 @@ import {
 const wireUiEvents = (ctx: AppContext): void => {
   const { els, mapView, state } = ctx
 
+  renderCommuteHint(els)
+  els.officeStartInput.addEventListener('input', () => renderCommuteHint(els))
+  els.rideCapInput.addEventListener('input', () => renderCommuteHint(els))
+  els.editCommuteButton.addEventListener('click', () => {
+    setMobileView('search')
+    const input =
+      getSelectedWorkplaceKind() === 'station'
+        ? els.stationFilterInput
+        : els.postalInput
+    input.focus()
+  })
   const invalidateSearchInput = (event: Event): void => {
     if (event.target !== els.stationFilterInput) invalidatePreview(ctx)
   }
@@ -87,6 +97,7 @@ const wireUiEvents = (ctx: AppContext): void => {
         if (target === 'map') {
           mapView.invalidateSize()
         }
+        if (target === 'search') els.searchHeading.focus()
       }
     })
   }
@@ -168,8 +179,8 @@ const bootstrap = async (): Promise<void> => {
 
   const saved = loadCompletedResult(window.localStorage)
   if (saved) {
-    applySnapshot(ctx, saved)
     setMobileView('map')
+    applySnapshot(ctx, saved)
   }
 
   if ('serviceWorker' in navigator) {
@@ -184,7 +195,6 @@ const bootstrap = async (): Promise<void> => {
     const inventory = parseStopInventory(stopsText)
     state.inventory = inventory
     state.networkText = networkText
-    renderInventorySummary(els, inventory, getDefaultSearchDate(Date.now()))
     renderStationOptions(
       els.stationSelect,
       filterRailStations(inventory, ''),
@@ -199,7 +209,6 @@ const bootstrap = async (): Promise<void> => {
     })
     syncConnectivity(ctx)
   } catch (error) {
-    els.inventoryBadge.textContent = 'Inventory unavailable'
     renderInlineError(
       els.searchError,
       `Could not load stop inventory: ${normalizeError(error, 'fetch failed').message}`,

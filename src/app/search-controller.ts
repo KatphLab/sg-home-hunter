@@ -27,6 +27,7 @@ import {
   renderSelectedStopCard,
   renderStationOptions,
   renderStatusBadge,
+  setMobileView,
 } from './dom-render.js'
 import type { CommuteMapView } from './map-view.js'
 import {
@@ -71,15 +72,16 @@ export const syncConnectivity = (ctx: AppContext): void => {
   const online = navigator.onLine
   const canStart =
     online &&
-    state.account !== null &&
     state.inventory !== null &&
     state.networkText !== null &&
     !state.isSearching
   renderConnectivityState(els, online, canStart)
+  const canCheck = canStart && state.account !== null
   els.checkAreaButton.disabled =
-    !canStart || !state.selectedArea || state.areaCheck?.hasRun !== false
+    !canCheck || !state.selectedArea || state.areaCheck?.hasRun !== false
+  els.checkAreaButton.hidden = state.areaCheck?.hasRun === true
   els.checkMoreButton.hidden = !state.areaCheck?.hasMore || state.isSearching
-  els.checkMoreButton.disabled = !canStart
+  els.checkMoreButton.disabled = !canCheck
 }
 
 export const syncAccountUi = (ctx: AppContext): void => {
@@ -151,6 +153,7 @@ export const handleSignIn = async (ctx: AppContext): Promise<void> => {
     els.passwordInput.value = ''
     state.account = account
     syncAccountUi(ctx)
+    els.startSearchButton.focus()
   } catch (error) {
     renderInlineError(
       els.authError,
@@ -189,9 +192,7 @@ const resetAreaSelection = (ctx: AppContext): void => {
   ctx.els.areaResult.hidden = true
   ctx.els.areaResult.textContent = ''
   ctx.els.checkMoreButton.hidden = true
-  ctx.els.areaJourney.hidden = true
   ctx.els.resultStatusTag.textContent = 'Estimated preview'
-  ctx.els.checkAreaButton.disabled = !navigator.onLine || !ctx.state.account
   selectStop(ctx, null)
 }
 
@@ -206,9 +207,11 @@ export const stopActiveSearch = (ctx: AppContext): void => {
 export const refreshAreaStopPicker = (ctx: AppContext): void => {
   const { els, state } = ctx
   const query = els.areaStopFilter.value.trim().toLowerCase()
-  const stops = (state.inventory?.stops ?? []).filter((stop) =>
-    `${stop.id} ${stop.name}`.toLowerCase().includes(query),
-  )
+  const stops = query
+    ? (state.inventory?.stops ?? []).filter((stop) =>
+        `${stop.id} ${stop.name}`.toLowerCase().includes(query),
+      )
+    : (state.preview?.leads.map((lead) => lead.stop) ?? [])
   renderStationOptions(els.areaStopSelect, stops, '')
   els.areaStopSelect.selectedIndex = -1
 }
@@ -224,11 +227,16 @@ export const selectArea = (
     return
   }
   resetAreaSelection(ctx)
-  if (!focus) refreshAreaStopPicker(ctx)
+  if (!focus) {
+    els.areaPicker.open = false
+    refreshAreaStopPicker(ctx)
+  }
   state.selectedArea = centre
   const count = candidatesWithinArea(state.preview, centre).length
   mapView.setAreaSelection(centre, focus)
-  els.areaSummary.textContent = `${label}: ${String(count)} estimated candidates within 500 m straight-line distance. Not a walking route; estimates are not verified journeys.`
+  els.previewSummary.hidden = true
+  els.areaSummary.textContent = `${label}: ${String(count)} estimated candidates within 500 m. Straight-line distance, not a walking route.`
+  syncConnectivity(ctx)
 }
 
 export const invalidatePreview = (ctx: AppContext): void => {
@@ -245,7 +253,6 @@ export const invalidatePreview = (ctx: AppContext): void => {
   els.checkMoreButton.hidden = true
   els.checkAreaButton.disabled = true
   els.areaResult.textContent = ''
-  els.areaJourney.hidden = true
   els.stopSearchButton.hidden = true
   if (wasActive) mapView.clearPreview()
   if (wasActive) {
@@ -280,7 +287,6 @@ const displayPreview = (
   state.matches = []
   mapView.clearStops()
   mapView.setWorkplace(preview.workplace)
-  mapView.setPreview(preview.leads, preview.constraints.rideCapMinutes)
   if (preview.workplace.kind === 'station' && state.inventory) {
     const station = findRailStationById(
       state.inventory,
@@ -302,7 +308,6 @@ const displayPreview = (
   renderConstraintsSummary(
     els,
     preview.workplace,
-    preview.constraints.searchDate,
     preview.constraints.officeStart,
     preview.constraints.rideCapMinutes,
   )
@@ -313,13 +318,23 @@ const displayPreview = (
   const marginCount = preview.leads.filter((lead) =>
     hasTenMinuteMargin(lead.estRideMs, preview.constraints.rideCapMinutes),
   ).length
-  els.previewSummary.textContent = `${String(preview.leads.length)} estimated stops: ${String(marginCount)} at least 10 min below cap; ${String(preview.leads.length - marginCount)} less than 10 min below. No routing requests made.`
+  els.previewSummary.hidden = false
+  const empty = preview.leads.length === 0
+  els.editCommuteButton.hidden = !empty
+  els.previewSummary.textContent = empty
+    ? 'No estimated stops for this commute. Qualifying journeys may still exist.'
+    : `${String(preview.leads.length)} estimated stops: ${String(marginCount)} at least 10 min below cap; ${String(preview.leads.length - marginCount)} less than 10 min below. Time bands are not confidence scores. No routing requests made.`
   els.liveStatusRegion.textContent = els.previewSummary.textContent
   els.areaSummary.textContent =
-    'Choose a stop below or click the map to select a 500 m area.'
+    'Tap the map or find a stop by name to choose a 500 m area.'
   els.areaStopFilter.value = ''
+  els.areaPicker.open = false
   refreshAreaStopPicker(ctx)
   els.previewPanel.hidden = false
+  setMobileView('map')
+  mapView.invalidateSize()
+  mapView.setPreview(preview.leads, preview.constraints.rideCapMinutes)
+  els.previewHeading.focus()
 }
 
 const showPreviewError = (ctx: AppContext, error: unknown): void => {
@@ -329,6 +344,7 @@ const showPreviewError = (ctx: AppContext, error: unknown): void => {
     ctx.state.account = null
     renderInlineError(ctx.els.authError, error.message)
     syncAccountUi(ctx)
+    openSignIn(ctx.els)
   } else {
     renderInlineError(
       ctx.els.searchError,
@@ -337,21 +353,32 @@ const showPreviewError = (ctx: AppContext, error: unknown): void => {
   }
 }
 
+const openSignIn = (els: AppElements): void => {
+  els.accountPanel.hidden = false
+  els.startSearchButton.setAttribute('aria-expanded', 'true')
+  els.emailInput.focus()
+}
+
 export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   const { els, state } = ctx
   const { inventory, networkText, account } = state
-  if (!inventory || networkText === null || !account || state.isSearching) {
+  if (
+    !inventory ||
+    networkText === null ||
+    state.isSearching ||
+    !navigator.onLine
+  ) {
+    return
+  }
+  if (!account) {
+    openSignIn(els)
     return
   }
   invalidatePreview(ctx)
   renderInlineError(els.searchError, null)
-  const rideCapMinutes = Number(els.rideCapInput.value)
+  const rideCapMinutes = els.rideCapInput.valueAsNumber
   const officeStart = els.officeStartInput.value
-  if (
-    !Number.isInteger(rideCapMinutes) ||
-    rideCapMinutes < 1 ||
-    rideCapMinutes > 180
-  ) {
+  if (!els.rideCapInput.validity.valid) {
     renderInlineError(
       els.searchError,
       'Ride cap must be a whole number between 1 and 180 minutes.',
@@ -363,7 +390,6 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
     officeStart,
     rideCapMinutes,
   }
-  els.plannedSearchDate.textContent = constraints.searchDate
   const controller = new AbortController()
   state.abortController = controller
   state.isSearching = true

@@ -14,17 +14,27 @@ const json = (route: Route, body: unknown, status = 200) =>
   })
 
 const chooseArea = async (page: Page, id = '11111') => {
+  if (!(await page.locator('#area-stop-filter').isVisible())) {
+    await page.locator('#area-picker summary').click()
+  }
   await page.fill('#area-stop-filter', id)
   await page.selectOption('#area-stop-select', id)
 }
 
 const preview = async (page: Page) => {
-  await page.fill('#postal-input', '018989')
-  await page.fill('#office-start-input', '09:00')
-  await page.click('#start-search-btn')
+  const start = page.locator('#start-search-btn')
+  await expect(start).toHaveText('Preview estimated stops')
+  await start.click()
   await expect(page.locator('#result-status-tag')).toHaveText(
     'Estimated preview',
   )
+}
+
+const expectOriginalCheckedDate = async (page: Page) => {
+  const date = page.locator('#selected-journey-date')
+  await expect(date).toBeVisible()
+  await expect(date).toHaveText('Checked for Thursday, 26 November')
+  await expect(date).toHaveAttribute('datetime', '2026-11-26')
 }
 
 const journey = (date: string, stopCode = '11111') => {
@@ -51,7 +61,7 @@ const journey = (date: string, stopCode = '11111') => {
   }
 }
 
-const savedVisible = async (page: Page, date: string) => {
+const savedVisible = async (page: Page) => {
   await expect(page.locator('#offline-banner')).toBeVisible()
   await expect(page.locator('#account-status-pill')).toHaveText('Not connected')
   await expect(page.locator('#start-search-btn')).toBeDisabled()
@@ -60,7 +70,7 @@ const savedVisible = async (page: Page, date: string) => {
     'Saved offline area check',
   )
   const summary = page.locator('#active-constraints-summary')
-  await expect(summary).toContainText(`Date ${date}`)
+  await expect(summary).not.toContainText(/2026-11-26|26 November/)
   await expect(summary).toContainText('09:00')
   await expect(summary).toContainText('Ride cap 30 min')
   await expect(summary).toContainText('18 MARINA GARDENS DR')
@@ -88,6 +98,7 @@ const savedVisible = async (page: Page, date: string) => {
     'Ride cap 30 min',
   )
   await page.click('.stop-row-btn[data-stop-id="11111"]')
+  await expectOriginalCheckedDate(page)
   await expect(page.locator('#selected-boarding-time')).toHaveText('08:25')
   await expect(page.locator('#selected-arrival-time')).toHaveText('08:45')
   await expect(page.locator('#selected-ride-duration')).toHaveText('19 min')
@@ -142,6 +153,7 @@ test.beforeEach(async ({ page, context }) => {
     ).split('-')
     return json(route, journey(`${year}-${month}-${day}`))
   })
+  await page.clock.setFixedTime(new Date('2026-11-25T12:00:00+08:00'))
   await page.goto('/')
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready
@@ -152,12 +164,51 @@ test.beforeEach(async ({ page, context }) => {
       page.evaluate(() => navigator.serviceWorker.controller !== null),
     )
     .toBe(true)
+  await page.fill('#postal-input', '018989')
+  await page.fill('#office-start-input', '09:00')
+  await expect(page.locator('#signin-form')).toBeHidden()
+  await page.click('#start-search-btn')
   await page.fill('#onemap-email', 'commuter@example.com')
   await page.fill('#onemap-password', 'test-pass')
   await page.click('#signin-btn')
   await expect(page.locator('#signed-in-email')).toHaveText(
     'commuter@example.com',
   )
+})
+
+test('reopens a saved mobile check before offering a new search', async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await preview(page)
+  await chooseArea(page)
+  await page.getByRole('button', { name: 'Check within 500 m' }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Board at River Homes' }),
+  ).toBeVisible()
+  await page.clock.setFixedTime(new Date('2026-11-26T12:00:00+08:00'))
+  await page.reload()
+  await expect(page.locator('#map')).toBeVisible()
+  await expect(page.locator('#result-status-tag')).toHaveText(
+    'Saved offline area check',
+  )
+  await expectOriginalCheckedDate(page)
+  await expect(page.locator('#selected-journey-disclaimer')).toContainText(
+    'One qualifying journey',
+  )
+  await expect(page.locator('#signin-form')).toBeHidden()
+  await context.setOffline(true)
+  await page.reload()
+  await expect(
+    page.getByRole('heading', { name: 'Board at River Homes' }),
+  ).toBeVisible()
+  await expectOriginalCheckedDate(page)
+  await page.getByRole('button', { name: 'New search' }).click()
+  await expect(page.locator('#heading-search')).toBeFocused()
+  await expect(page.locator('#postal-input')).toBeVisible()
+  await expect(page.locator('#map')).toBeHidden()
+  await expect(page.locator('#start-search-btn')).toBeDisabled()
 })
 
 const arrangeLaterOutcome = async (
@@ -204,7 +255,9 @@ test('saves only the successful selected area, not unrelated proof from a missed
   await preview(page)
   await chooseArea(page)
   await page.click('#check-area-btn')
-  await expect(page.locator('#area-result')).toContainText('Not confirmed')
+  await expect(page.locator('#area-result')).toContainText(
+    'No commute confirmed',
+  )
   await expect(page.locator('.stop-row-btn[data-stop-id="88888"]')).toHaveCount(
     1,
   )
@@ -225,6 +278,7 @@ test('saves only the successful selected area, not unrelated proof from a missed
     1,
   )
   await expect(page.locator('#stops-tried-value')).toHaveText('2 / 2')
+  await expectOriginalCheckedDate(page)
 })
 
 const interruptOfflineCheck = async (
@@ -272,18 +326,14 @@ for (const later of [
       if (message.type() === 'error') diagnostics.push(message.text())
     })
     await preview(page)
-    const date = await page.locator('#planned-search-date').textContent()
-    if (date === null) throw new Error('Search date missing')
     await chooseArea(page)
     await page.click('#check-area-btn')
     await expect(page.locator('#area-result')).toContainText('Confirmed')
-    await expect(page.locator('#area-journey')).toContainText(
-      `${date}. Board 08:25`,
-    )
-    await expect(page.locator('#area-journey')).toContainText(
-      'workplace arrival 08:45',
-    )
+    await expectOriginalCheckedDate(page)
+    await expect(page.locator('#selected-boarding-time')).toHaveText('08:25')
+    await expect(page.locator('#selected-arrival-time')).toHaveText('08:45')
     await expect(page.locator('.stop-row-btn')).toHaveCount(1)
+    await page.clock.setFixedTime(new Date('2026-11-26T12:00:00+08:00'))
 
     if (later !== 'reload') {
       // A fresh search cannot reuse the saved boarding as current-date proof.
@@ -298,7 +348,7 @@ for (const later of [
         await page.click('#check-area-btn')
         const expected = {
           empty: 'No estimated candidates',
-          miss: 'Not confirmed',
+          miss: 'No commute confirmed',
           failure: 'Sign-in expired',
           'routing failure': 'Routing failed',
           'storage failure': 'Could not save',
@@ -317,6 +367,6 @@ for (const later of [
     }
     await context.setOffline(true)
     await page.goto('/')
-    await savedVisible(page, date)
+    await savedVisible(page)
   })
 }

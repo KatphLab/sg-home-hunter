@@ -140,8 +140,8 @@ const runAreaBatch = async (
   showOutcome(
     ctx,
     areaCheck.hasMore
-      ? 'Not confirmed in these checks. Other qualifying journeys may exist.'
-      : `Not confirmed in the completed checks. ${exhaustion} Other qualifying journeys may exist.`,
+      ? 'No commute confirmed. Other qualifying journeys may exist.'
+      : `No commute confirmed. ${exhaustion} Other qualifying journeys may exist.`,
   )
 }
 
@@ -159,6 +159,14 @@ const showRoutingError = (ctx: AppContext, error: unknown): void => {
       `Routing failed: ${normalizeError(error, 'Unable to check this area.').message} This is not evidence of no journey.`,
     )
   }
+}
+
+const finishAreaCheck = ({ state, els }: AppContext): void => {
+  const focusResult = document.activeElement === els.stopAreaButton
+  state.abortController = null
+  state.isSearching = false
+  els.stopAreaButton.hidden = true
+  if (focusResult) els.areaResult.focus({ preventScroll: true })
 }
 
 export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
@@ -182,7 +190,8 @@ export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
   areaCheck.hasRun = true
   els.checkAreaButton.disabled = true
   els.stopAreaButton.hidden = false
-  els.areaJourney.hidden = true
+  els.areaPicker.open = false
+  els.stopAreaButton.focus({ preventScroll: true })
   syncConnectivity(ctx)
   try {
     const existing = proofWithinArea(ctx, selectedArea)
@@ -214,9 +223,7 @@ export const checkSelectedArea = async (ctx: AppContext): Promise<void> => {
     showRoutingError(ctx, error)
   } finally {
     if (controller === state.abortController) {
-      state.abortController = null
-      state.isSearching = false
-      els.stopAreaButton.hidden = true
+      finishAreaCheck(ctx)
       syncConnectivity(ctx)
     }
   }

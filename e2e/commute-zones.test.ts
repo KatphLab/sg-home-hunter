@@ -6,8 +6,14 @@ import {
   test,
 } from '@playwright/test'
 
+const INVENTORY_DATE = '2026-11-20'
+const SEARCH_DATE = '2026-06-02'
+const ROUTING_DATE = '06-02-2026'
+const SEARCH_DATE_LABEL = 'Tuesday, 2 June'
+const CHECKED_FOR_DATE = `Checked for ${SEARCH_DATE_LABEL}`
+
 const TEST_INVENTORY_TSV = [
-  'inventoryDate\t2026-11-20',
+  `inventoryDate\t${INVENTORY_DATE}`,
   'id\tkind\tname\tlatitude\tlongitude',
   '03218\tbus\tMarina Gardens Opp\t1.279100\t103.854000',
   '11111\tbus\tRiver Homes\t1.300000\t103.850000',
@@ -74,16 +80,24 @@ const stubTilesAndInventory = async (page: Page): Promise<void> => {
   )
 }
 
-const signInViaUi = async (page: Page): Promise<void> => {
+const submitOneMapCredentials = async (page: Page): Promise<void> => {
   await page.fill('#onemap-email', 'commuter@example.com')
   await page.fill('#onemap-password', 'test-pass')
   await page.click('#signin-btn')
+}
+
+const signInViaUi = async (page: Page): Promise<void> => {
+  await page.click('#start-search-btn')
+  await submitOneMapCredentials(page)
   await expect(page.locator('#signed-in-email')).toHaveText(
     'commuter@example.com',
   )
 }
 
 const selectArea = async (page: Page, stopId: string): Promise<void> => {
+  if (!(await page.locator('#area-stop-filter').isVisible())) {
+    await page.locator('#area-picker summary').click()
+  }
   await page.fill('#area-stop-filter', stopId)
   await page.selectOption('#area-stop-select', stopId)
 }
@@ -102,34 +116,27 @@ const expectInterrupted = async (page: Page, change: string): Promise<void> => {
   }
 }
 
-const previewRiver = async (page: Page): Promise<string> => {
+const previewRiver = async (page: Page): Promise<void> => {
   await page.goto('/')
-  await signInViaUi(page)
   await page.fill('#postal-input', '018989')
   await page.fill('#office-start-input', '09:00')
+  await signInViaUi(page)
   await page.click('#start-search-btn')
   await expect(page.locator('#result-status-tag')).toHaveText(
     'Estimated preview',
   )
   await expect(page.locator('#check-area-btn')).toBeDisabled()
   await expect(page.locator('#area-result')).toBeHidden()
-  await expect(page.locator('#area-journey')).toBeHidden()
+  await expect(page.locator('#selected-stop-card')).toBeHidden()
   await selectArea(page, '11111')
   await expect(page.locator('#area-summary')).toContainText(
     '2 estimated candidates',
   )
   await expect(page.locator('#check-area-btn')).toBeEnabled()
-  const date = await page.locator('#planned-search-date').textContent()
-  if (date === null) throw new Error('Search date missing')
-  return date.trim()
 }
 
-const actualJourney = (
-  searchDate: string,
-  inArea: boolean,
-  arrival = '08:45',
-) => {
-  const at = (clock: string) => Date.parse(`${searchDate}T${clock}:00+08:00`)
+const actualJourney = (inArea: boolean, arrival = '08:45') => {
+  const at = (clock: string) => Date.parse(`${SEARCH_DATE}T${clock}:00+08:00`)
   const bus = (
     stopCode: string,
     service: string,
@@ -176,6 +183,8 @@ const requestedProbe = (route: Route): RequestedProbe => {
 
 test.describe('House Hunter PWA acceptance', () => {
   test.beforeEach(async ({ page, context }) => {
+    // The next working day follows the observed Vesak Day holiday on Monday.
+    await page.clock.setFixedTime(new Date('2026-05-29T09:00:00+08:00'))
     await stubTilesAndInventory(page)
     await context.route('**/api/auth/post/getToken', (route) =>
       fulfillJson(route, 200, {
@@ -207,14 +216,15 @@ test.describe('House Hunter PWA acceptance', () => {
       .route('**/api/auth/post/getToken', (route) => route.abort('failed'))
 
     await page.goto('/')
-    await page.fill('#onemap-email', 'commuter@example.com')
-    await page.fill('#onemap-password', 'test-pass')
-    await page.click('#signin-btn')
+    await page.fill('#postal-input', '018989')
+    await page.click('#start-search-btn')
+    await submitOneMapCredentials(page)
 
     const alert = page.locator('#auth-error')
     await expect(alert).toBeVisible()
     await expect(alert).toContainText('Couldn’t sign in to OneMap.')
     await expect(alert).not.toContainText('Wrong password')
+    await expect(page.locator('#postal-input')).toHaveValue('018989')
   })
 
   test('blocks duplicate postal submission during lookup and unlocks after lookup failure', async ({
@@ -231,8 +241,8 @@ test.describe('House Hunter PWA acceptance', () => {
       })
 
     await page.goto('/')
-    await signInViaUi(page)
     await page.fill('#postal-input', '018989')
+    await signInViaUi(page)
     const startButton = page.locator('#start-search-btn')
     await startButton.click()
     await expect.poll(() => lookupAttempts).toBe(1)
@@ -270,16 +280,19 @@ test.describe('House Hunter PWA acceptance', () => {
       if (request.url().includes('/api/common/elastic/search'))
         postalLookups += 1
     })
-    await page.clock.setFixedTime(new Date('2026-05-29T09:00:00+08:00'))
     await page.goto('/')
     await expect(page.locator('#section-preview')).toBeHidden()
+    await expect(page.locator('#signin-form')).toBeHidden()
     await expect(page.locator('#signed-in-bar')).toBeHidden()
     await expect(page.locator('#station-field-group')).toBeHidden()
     await expect(page.locator('#stop-search-btn')).toBeHidden()
     await expect(page.locator('#selected-stop-card')).toBeHidden()
-    await expect(page.locator('#planned-search-date')).toHaveText('2026-06-02')
-    await signInViaUi(page)
     await page.fill('#postal-input', '018989')
+    await signInViaUi(page)
+    expect(postalLookups).toBe(0)
+    await expect(page.getByText(SEARCH_DATE)).toHaveCount(0)
+    await expect(page.getByText(SEARCH_DATE_LABEL)).toHaveCount(0)
+    await expect(page.getByText(INVENTORY_DATE)).toHaveCount(0)
     await page.click('#start-search-btn')
     await expect(page.locator('#result-status-tag')).toHaveText(
       'Estimated preview',
@@ -296,6 +309,10 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#section-preview')).toContainText(
       'not confidence scores',
     )
+    await expect(page.getByText(SEARCH_DATE)).toHaveCount(0)
+    await expect(page.getByText(SEARCH_DATE_LABEL)).toHaveCount(0)
+    await expect(page.getByText(INVENTORY_DATE)).toHaveCount(0)
+    await expect(page.locator('#edit-commute-btn')).toBeHidden()
     await expect(page.locator('#stops-matched-value')).toHaveText('0')
     await expect(page.locator('.stop-row-btn')).toHaveCount(0)
     await expect
@@ -328,16 +345,15 @@ test.describe('House Hunter PWA acceptance', () => {
       )
       .toEqual({ blue: true, amber: true })
     await expect(page.locator('#selected-stop-card')).toBeHidden()
-    await page
-      .getByLabel('Find an area centre by stop name or ID')
-      .fill('11111')
+    await page.locator('#area-picker summary').press('Enter')
+    await page.getByLabel('Filter stops by name or ID').fill('11111')
     await page.getByLabel('Centre the 500 m area on a stop').focus()
     await page.keyboard.press('ArrowDown')
     await expect(page.locator('#area-summary')).toContainText(
       '11111 River Homes: 2 estimated candidates',
     )
     await expect(page.locator('#area-summary')).toContainText(
-      'Not a walking route',
+      'not a walking route',
     )
     const map = page.locator('#map')
     const box = await map.boundingBox()
@@ -349,6 +365,7 @@ test.describe('House Hunter PWA acceptance', () => {
     )
     await expect(page.locator('.leaflet-selection-pane path')).toHaveCount(1)
     await expect(page.locator('.leaflet-commuteZone-pane path')).toHaveCount(0)
+    await page.locator('#area-picker summary').press('Enter')
     await page.getByLabel('Centre the 500 m area on a stop').focus()
     await page.keyboard.press('ArrowDown')
     await expect(page.locator('#area-summary')).toContainText(
@@ -370,16 +387,24 @@ test.describe('House Hunter PWA acceptance', () => {
     expect(routingCalls).toBe(0)
   })
 
-  test('keeps the stop picker and area count usable without a map on mobile', async ({
+  test('opens the mobile map with the check dock and a keyboard stop picker', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto('/')
-    await signInViaUi(page)
     await page.fill('#postal-input', '018989')
+    await signInViaUi(page)
     await page.click('#start-search-btn')
     await expect(page.locator('#section-preview')).toBeVisible()
-    await expect(page.locator('#map')).toBeHidden()
+    await expect(page.locator('#map')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Map' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+    await expect(page.locator('#heading-preview')).toBeFocused()
+    await expect(page.locator('#heading-preview')).toHaveText('Estimated stops')
+    await expect(page.locator('#area-stop-filter')).toBeHidden()
+    await page.locator('#area-picker summary').press('Enter')
     await page.fill('#area-stop-filter', 'River Homes')
     await page.locator('#area-stop-select').focus()
     await page.keyboard.press('ArrowDown')
@@ -388,6 +413,55 @@ test.describe('House Hunter PWA acceptance', () => {
     )
     await page.click('[data-mobile-tab="stops"]')
     await expect(page.locator('#area-summary')).toBeVisible()
+    await expect(page.locator('#map')).toBeHidden()
+  })
+
+  test('keeps the setup through OneMap connection and editing an empty mobile preview', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/')
+    const postal = page.locator('#postal-input')
+    const officeStart = page.locator('#office-start-input')
+    const rideCap = page.locator('#ride-cap-input')
+    const commuteHint = page.locator('#commute-hint')
+    const start = page.locator('#start-search-btn')
+    const signin = page.locator('#signin-form')
+    await expect(signin).toBeHidden()
+    await expect(start).toHaveText('Connect OneMap to preview')
+    await expect(commuteHint).toHaveAttribute('aria-live', 'polite')
+    await expect(commuteHint).toContainText('Arrive 08:45–09:00.')
+    await postal.fill('018989')
+    await officeStart.fill('08:30')
+    await rideCap.fill('1')
+    await expect(commuteHint).toContainText('Arrive 08:15–08:30.')
+    await expect(commuteHint).toContainText(
+      'Your 1-minute ride cap excludes walking and waiting.',
+    )
+    await start.click()
+    await expect(signin).toBeVisible()
+    await expect(page.locator('#onemap-email')).toBeFocused()
+    await expect(postal).toHaveValue('018989')
+    await expect(officeStart).toHaveValue('08:30')
+    await expect(rideCap).toHaveValue('1')
+    await submitOneMapCredentials(page)
+    await expect(signin).toBeHidden()
+    await expect(start).toHaveText('Preview estimated stops')
+    await expect(page.locator('#section-preview')).toBeHidden()
+    await start.click()
+    await expect(page.locator('#preview-summary')).toContainText(
+      'No estimated stops for this commute. Qualifying journeys may still exist.',
+    )
+    await page.getByRole('button', { name: 'Edit commute' }).click()
+    await expect(postal).toBeFocused()
+    await expect(postal).toHaveValue('018989')
+    await expect(officeStart).toHaveValue('08:30')
+    await expect(rideCap).toHaveValue('1')
+    await rideCap.fill('30')
+    await start.click()
+    await expect(page.locator('#preview-summary')).toContainText(
+      '2 estimated stops',
+    )
   })
 
   test('spends three logical probes in ride-sorted round-robin order, retaining tried departures', async ({
@@ -399,11 +473,11 @@ test.describe('House Hunter PWA acceptance', () => {
       probes.push(requestedProbe(route))
       return fulfillJson(route, 200, { plan: { itineraries: [] } })
     })
-    const searchDate = await previewRiver(page)
+    await previewRiver(page)
     await page.click('#check-area-btn')
     const outcome = page.locator('#area-result')
     await expect(outcome).toHaveAttribute('role', 'status')
-    await expect(outcome).toContainText('Not confirmed')
+    await expect(outcome).toContainText('No commute confirmed')
     await expect(outcome).toContainText('3 checks')
     await expect(outcome).not.toContainText('unreachable')
     await expect(page.locator('#check-area-btn')).toBeDisabled()
@@ -414,16 +488,15 @@ test.describe('House Hunter PWA acceptance', () => {
       '1.3,103.85',
     ])
     expect(probes[0]?.time).not.toBe(probes[2]?.time)
-    const [year, month, day] = searchDate.split('-')
-    expect(
-      probes.every((probe) => probe.date === `${month}-${day}-${year}`),
-    ).toBe(true)
     await selectArea(page, '11112')
     await expect(outcome).toBeHidden()
     await page.click('#check-area-btn')
-    await expect(outcome).toContainText('Not confirmed')
+    await expect(outcome).toContainText('No commute confirmed')
     await expect(outcome).toContainText('3 checks')
     expect(probes).toHaveLength(6)
+    expect(new Set(probes.map((probe) => probe.date))).toEqual(
+      new Set([ROUTING_DATE]),
+    )
     expect(
       new Set(probes.map((probe) => `${probe.start}@${probe.time}`)).size,
     ).toBe(6)
@@ -446,7 +519,7 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(outcome).toContainText('3 checks')
     await expect(more).toBeVisible()
     await more.click()
-    await expect(outcome).toContainText('Not confirmed')
+    await expect(outcome).toContainText('No commute confirmed')
     await expect(outcome).toContainText('3 checks')
     await expect(more).toBeVisible()
     expect(probes.map((probe) => probe.start)).toEqual([
@@ -480,17 +553,18 @@ test.describe('House Hunter PWA acceptance', () => {
     page,
     context,
   }) => {
-    let searchDate = ''
     const probes: RequestedProbe[] = []
     await context.route('**/api/public/routingsvc/route*', (route) => {
       probes.push(requestedProbe(route))
       return fulfillJson(route, 200, {
-        plan: { itineraries: [actualJourney(searchDate, probes.length === 5)] },
+        plan: { itineraries: [actualJourney(probes.length === 5)] },
       })
     })
-    searchDate = await previewRiver(page)
+    await previewRiver(page)
     await page.click('#check-area-btn')
-    await expect(page.locator('#area-result')).toContainText('Not confirmed')
+    await expect(page.locator('#area-result')).toContainText(
+      'No commute confirmed',
+    )
     await expect(page.locator('#area-result')).toContainText('3 checks')
     await page.getByRole('button', { name: 'Check more departures' }).click()
     await expect(page.locator('#area-result')).toContainText('Confirmed')
@@ -506,15 +580,18 @@ test.describe('House Hunter PWA acceptance', () => {
       new Set(probes.map((probe) => `${probe.start}@${probe.time}`)).size,
     ).toBe(5)
     await expect(page.locator('#check-more-btn')).toBeHidden()
-    const evidence = await page.locator('#area-journey').textContent()
+    const evidence = await page.locator('#selected-stop-card').textContent()
     if (evidence === null) throw new Error('Confirmed journey missing')
-    expect(evidence).toContain(searchDate)
-    expect(evidence).toContain('11115 River Transfer')
+    expect(evidence).toContain(CHECKED_FOR_DATE)
+    await expect(page.locator('#selected-stop-id')).toHaveText('11115')
+    await expect(
+      page.getByRole('heading', { name: 'Board at River Transfer' }),
+    ).toBeVisible()
     await selectArea(page, '11116')
     await page.click('#check-area-btn')
     await expect(page.locator('#area-result')).toContainText('Confirmed')
     await expect(page.locator('#area-result')).toContainText('0 checks')
-    await expect(page.locator('#area-journey')).toHaveText(evidence)
+    await expect(page.locator('#selected-stop-card')).toHaveText(evidence)
     expect(probes).toHaveLength(5)
   })
 
@@ -528,19 +605,18 @@ test.describe('House Hunter PWA acceptance', () => {
       page,
       context,
     }) => {
-      await page.clock.setFixedTime(new Date('2026-11-25T12:00:00+08:00'))
-      let searchDate = ''
       let confirmed = false
+      const oldProof = [actualJourney(true)]
       const probes: RequestedProbe[] = []
       await context.route('**/api/public/routingsvc/route*', (route) => {
         probes.push(requestedProbe(route))
         return fulfillJson(route, 200, {
           plan: {
-            itineraries: confirmed ? [] : [actualJourney(searchDate, true)],
+            itineraries: confirmed && change !== 'search date' ? [] : oldProof,
           },
         })
       })
-      searchDate = await previewRiver(page)
+      await previewRiver(page)
       await page.click('#check-area-btn')
       await expect(page.locator('#area-result')).toContainText('Confirmed')
       confirmed = true
@@ -548,7 +624,7 @@ test.describe('House Hunter PWA acceptance', () => {
         'office start': () => page.fill('#office-start-input', '08:55'),
         'ride cap': () => page.fill('#ride-cap-input', '25'),
         'search date': () =>
-          page.clock.setFixedTime(new Date('2026-11-26T12:00:00+08:00')),
+          page.clock.setFixedTime(new Date('2026-06-02T12:00:00+08:00')),
         workplace: async () => {
           await context.route('**/api/common/elastic/search*', (route) =>
             fulfillJson(route, 200, {
@@ -570,21 +646,25 @@ test.describe('House Hunter PWA acceptance', () => {
       await expect(page.locator('#result-status-tag')).toHaveText(
         'Estimated preview',
       )
-      await expect(page.locator('#area-journey')).toBeHidden()
+      await expect(page.locator('#selected-stop-card')).toBeHidden()
       await expect(
         page.locator('.stop-row-btn[data-stop-id="11115"]'),
       ).toHaveCount(0)
-      if (change === 'search date') {
-        await expect(page.locator('#planned-search-date')).not.toHaveText(
-          searchDate,
-        )
-      }
       await selectArea(page, '11111')
       await page.click('#check-area-btn')
-      await expect(page.locator('#area-result')).toContainText('Not confirmed')
+      await expect(page.locator('#area-result')).toContainText(
+        'No commute confirmed',
+      )
       await expect(page.locator('#area-result')).toContainText('3 checks')
-      await expect(page.locator('#area-journey')).toBeHidden()
-      expect(probes).toHaveLength(4)
+      await expect(page.locator('#selected-stop-card')).toBeHidden()
+      const nextRoutingDate =
+        change === 'search date' ? '06-03-2026' : ROUTING_DATE
+      expect(probes.map((probe) => probe.date)).toEqual([
+        ROUTING_DATE,
+        nextRoutingDate,
+        nextRoutingDate,
+        nextRoutingDate,
+      ])
       if (change === 'ride cap') expect(probes[1]).toEqual(probes[0])
     })
   }
@@ -595,20 +675,23 @@ test.describe('House Hunter PWA acceptance', () => {
       context,
     }) => {
       await page.setViewportSize({ width: 390, height: 844 })
-      let searchDate = ''
       const probes: RequestedProbe[] = []
       await context.route('**/api/public/routingsvc/route*', (route) => {
         probes.push(requestedProbe(route))
         return fulfillJson(route, 200, {
           plan: {
-            itineraries: [
-              actualJourney(searchDate, probes.length > 1, arrival),
-            ],
+            itineraries: [actualJourney(probes.length > 1, arrival)],
           },
         })
       })
-      searchDate = await previewRiver(page)
-      await page.click('[data-mobile-tab="stops"]')
+      await previewRiver(page)
+      await expect(page.locator('#map')).toBeVisible()
+      const map = page.locator('#map')
+      const box = await map.boundingBox()
+      if (!box) throw new Error('Map is not visible')
+      await map.click({ position: { x: box.width / 2, y: box.height / 2 } })
+      await expect(page.locator('#area-summary')).toContainText('Map point')
+      expect(probes).toHaveLength(0)
       await page.click('#check-area-btn')
       await expect(page.locator('#area-result')).toContainText('Confirmed')
       await expect(page.locator('#area-result')).toContainText('2 checks')
@@ -616,12 +699,11 @@ test.describe('House Hunter PWA acceptance', () => {
         '1.3,103.85',
         '1.3005,103.85',
       ])
-      const journey = page.locator('#section-preview #area-journey')
+      const journey = page.locator('#selected-stop-card')
       await expect(journey).toBeVisible()
       for (const detail of [
         '11115',
         'River Transfer',
-        searchDate,
         '08:25',
         '14 min',
         arrival,
@@ -629,8 +711,14 @@ test.describe('House Hunter PWA acceptance', () => {
       ]) {
         await expect(journey).toContainText(detail)
       }
+      const checkedFor = page.locator('#selected-journey-date')
+      await expect(checkedFor).toHaveText(CHECKED_FOR_DATE)
+      await expect(checkedFor).toHaveAttribute('datetime', SEARCH_DATE)
+      await expect(page.getByText(SEARCH_DATE_LABEL)).toHaveCount(1)
+      await expect(page.getByText(SEARCH_DATE)).toHaveCount(0)
+      await expect(page.getByText(INVENTORY_DATE)).toHaveCount(0)
       await expect(journey).not.toContainText('Bus 11')
-      await expect(page.locator('#map')).toBeHidden()
+      await expect(page.locator('#map')).toBeVisible()
       await expect(page.locator('#check-area-btn')).toBeDisabled()
       await expect(page.locator('#stop-area-btn')).toBeHidden()
       await expect(
@@ -693,19 +781,20 @@ test.describe('House Hunter PWA acceptance', () => {
       page,
       context,
     }) => {
-      let searchDate = ''
       let calls = 0
       await context.route('**/api/public/routingsvc/route*', (route) => {
         calls += 1
         return fulfillJson(route, 200, {
-          plan: { itineraries: [actualJourney(searchDate, true, arrival)] },
+          plan: { itineraries: [actualJourney(true, arrival)] },
         })
       })
-      searchDate = await previewRiver(page)
+      await previewRiver(page)
       await page.click('#check-area-btn')
-      await expect(page.locator('#area-result')).toContainText('Not confirmed')
+      await expect(page.locator('#area-result')).toContainText(
+        'No commute confirmed',
+      )
       await expect(page.locator('#area-result')).toContainText('3 checks')
-      await expect(page.locator('#area-journey')).toBeHidden()
+      await expect(page.locator('#selected-stop-card')).toBeHidden()
       await expect(page.locator('.stop-row-btn')).toHaveCount(0)
       expect(calls).toBe(3)
     })
@@ -731,8 +820,8 @@ test.describe('House Hunter PWA acceptance', () => {
         { timeout: 20_000 },
       )
       await expect(outcome).toContainText('1 check')
-      await expect(outcome).not.toContainText('Not confirmed')
-      await expect(page.locator('#area-journey')).toBeHidden()
+      await expect(outcome).not.toContainText('No commute confirmed')
+      await expect(page.locator('#selected-stop-card')).toBeHidden()
       await expect(page.locator('#stop-area-btn')).toBeHidden()
       await expect(page.locator('#check-area-btn')).toBeDisabled()
       expect(probes).toHaveLength(failure === 'auth' ? 1 : 4)
@@ -757,19 +846,18 @@ test.describe('House Hunter PWA acceptance', () => {
       const responseGate = Promise.withResolvers<void>()
       const responseSent = Promise.withResolvers<void>()
       let calls = 0
-      let searchDate = ''
       await context.route('**/api/public/routingsvc/route*', async (route) => {
         calls += 1
         await responseGate.promise
         try {
           await fulfillJson(route, 200, {
-            plan: { itineraries: [actualJourney(searchDate, true)] },
+            plan: { itineraries: [actualJourney(true)] },
           })
         } finally {
           responseSent.resolve()
         }
       })
-      searchDate = await previewRiver(page)
+      await previewRiver(page)
       await page.click('#check-area-btn')
       await expect.poll(() => calls).toBe(1)
       await expect(page.locator('#check-area-btn')).toBeDisabled()
@@ -789,7 +877,7 @@ test.describe('House Hunter PWA acceptance', () => {
         responseGate.resolve()
       }
       await responseSent.promise
-      await expect(page.locator('#area-journey')).toBeHidden()
+      await expect(page.locator('#selected-stop-card')).toBeHidden()
       await expect(page.locator('#area-result')).not.toContainText('Confirmed')
       expect(calls).toBe(1)
       await expectInterrupted(page, change)
@@ -809,9 +897,9 @@ test.describe('House Hunter PWA acceptance', () => {
       return fulfillJson(route, 500, {})
     })
     await page.goto('/')
-    await signInViaUi(page)
     await page.click('input[name="workplace-kind"][value="station"]')
     await page.selectOption('#station-select', 'NS17')
+    await signInViaUi(page)
     await page.click('#start-search-btn')
     await expect(page.locator('#result-status-tag')).toHaveText(
       'Estimated preview',
@@ -833,9 +921,9 @@ test.describe('House Hunter PWA acceptance', () => {
     await page.click('#check-area-btn')
     await expect(page.locator('#area-result')).toContainText('Confirmed')
     await expect(page.locator('#area-result')).toContainText('0 checks')
-    await expect(page.locator('#area-journey')).toContainText('NS17')
-    await expect(page.locator('#area-journey')).toContainText('0 min')
-    await expect(page.locator('#area-journey')).toContainText('09:00')
+    await expect(page.locator('#selected-stop-id')).toHaveText('NS17')
+    await expect(page.locator('#selected-ride-duration')).toHaveText('0 min')
+    await expect(page.locator('#selected-arrival-time')).toHaveText('09:00')
     expect(routingCalls).toBe(0)
     await page.fill('#ride-cap-input', '15')
     await expect(page.locator('#section-preview')).toBeHidden()
@@ -865,8 +953,8 @@ test.describe('House Hunter PWA acceptance', () => {
       })
     })
     await page.goto('/')
-    await signInViaUi(page)
     await page.fill('#postal-input', '018989')
+    await signInViaUi(page)
     await page.click('#start-search-btn')
     await expect.poll(() => lookups).toBe(1)
     await page.fill('#office-start-input', '08:30')
@@ -880,7 +968,10 @@ test.describe('House Hunter PWA acceptance', () => {
     await page.click('#signout-btn')
     lookupGate.resolve()
     await expect(page.locator('#section-preview')).toBeHidden()
-    await expect(page.locator('#start-search-btn')).toBeDisabled()
+    await expect(page.locator('#start-search-btn')).toBeEnabled()
+    await expect(page.locator('#start-search-btn')).toHaveText(
+      'Connect OneMap to preview',
+    )
     await expect(page.locator('#result-status-tag')).not.toHaveText(
       'Estimated preview',
     )
@@ -894,7 +985,7 @@ test.describe('House Hunter PWA acceptance', () => {
     const saved = {
       version: 1,
       completedAtIso: '2026-06-02T01:00:00Z',
-      inventoryDate: '2026-11-20',
+      inventoryDate: INVENTORY_DATE,
       workplace: {
         kind: 'postal',
         postalCode: '018989',
@@ -940,8 +1031,8 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#result-status-tag')).toHaveText(
       'Saved offline result',
     )
-    await signInViaUi(page)
     await page.fill('#postal-input', '018989')
+    await signInViaUi(page)
     await page.click('#start-search-btn')
     await expect(page.locator('#result-status-tag')).toHaveText(
       'Estimated preview',
@@ -960,7 +1051,9 @@ test.describe('House Hunter PWA acceptance', () => {
     )
     await selectArea(page, '11111')
     await page.click('#check-area-btn')
-    await expect(page.locator('#area-result')).toContainText('Not confirmed')
+    await expect(page.locator('#area-result')).toContainText(
+      'No commute confirmed',
+    )
     expect(
       await page.evaluate(() =>
         JSON.parse(
@@ -982,6 +1075,7 @@ test.describe('House Hunter PWA acceptance', () => {
     await page.click('#stop-search-btn')
     lookupGate.resolve()
     await context.setOffline(true)
+    await page.clock.setFixedTime(new Date('2026-06-03T12:00:00+08:00'))
     await page.reload()
     await expect(page.locator('#offline-banner')).toBeVisible()
     await expect(page.locator('#start-search-btn')).toBeDisabled()
@@ -992,9 +1086,9 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#result-status-tag')).toHaveText(
       'Saved offline result',
     )
-    await expect(page.locator('#active-constraints-summary')).toContainText(
-      'Date 2026-06-02',
-    )
+    await expect(page.getByText(SEARCH_DATE)).toHaveCount(0)
+    await expect(page.getByText(SEARCH_DATE_LABEL)).toHaveCount(0)
+    await expect(page.getByText(INVENTORY_DATE)).toHaveCount(0)
     await expect(page.locator('#active-constraints-summary')).toContainText(
       'Ride cap 40 min',
     )
@@ -1003,6 +1097,9 @@ test.describe('House Hunter PWA acceptance', () => {
       'Punggol Temp Int',
     )
     await expect(page.locator('#selected-services')).toHaveText('Bus 116')
+    const checkedFor = page.locator('#selected-journey-date')
+    await expect(checkedFor).toHaveText(CHECKED_FOR_DATE)
+    await expect(checkedFor).toHaveAttribute('datetime', SEARCH_DATE)
     await expect(
       page.locator('.stop-row-btn[data-stop-id="65009"]'),
     ).toBeVisible()
@@ -1070,8 +1167,8 @@ test.describe('House Hunter PWA acceptance', () => {
       }),
     )
     await page.goto('/')
-    await signInViaUi(page)
     await page.fill('#postal-input', '018989')
+    await signInViaUi(page)
     await page.click('#start-search-btn')
     await expect(page.locator('#search-error')).toContainText(
       'Fixture planner failure',
@@ -1098,9 +1195,9 @@ test.describe('House Hunter PWA acceptance', () => {
       return fulfillJson(route, 200, { plan: { itineraries: [] } })
     })
     await page.goto('/')
-    await signInViaUi(page)
     await page.click('input[name="workplace-kind"][value="station"]')
     await page.selectOption('#station-select', 'NS17')
+    await signInViaUi(page)
     await page.click('#start-search-btn')
     await expect(page.locator('#result-status-tag')).toHaveText(
       'Estimated preview',
@@ -1115,7 +1212,9 @@ test.describe('House Hunter PWA acceptance', () => {
       page.locator('.stop-row-btn[data-stop-id="NS17"]'),
     ).toHaveCount(1)
     await page.click('#check-more-btn')
-    await expect(page.locator('#area-result')).toContainText('1 checks')
+    await expect(page.locator('#area-result')).toContainText(
+      '1 check performed',
+    )
     expect(calls).toBe(4)
     await page.selectOption('#station-select', 'CC15')
     await expect(page.locator('#section-preview')).toBeHidden()

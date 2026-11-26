@@ -2,11 +2,6 @@ import type {
   CompletedSearchSnapshot,
   QualifiedStop,
 } from '@lib/commute-types.js'
-import {
-  formatJourneyTimes,
-  formatRideMinutes,
-  formatServiceChain,
-} from '@lib/journey-format.js'
 import { saveCompletedResult } from '@lib/saved-result-store.js'
 import { haversineDistanceMeters } from '@lib/transit-network.js'
 import { normalizeError } from '@utils/guards.js'
@@ -20,7 +15,9 @@ import { type AppContext, selectStop } from './search-controller.js'
 
 export const showOutcome = (ctx: AppContext, message: string): void => {
   ctx.els.areaResult.hidden = false
-  ctx.els.areaResult.textContent = `${message} ${String(ctx.state.areaCheck?.checksPerformed ?? 0)} checks performed.`
+  const count = ctx.state.areaCheck?.checksPerformed ?? 0
+  const checks = count === 1 ? 'check' : 'checks'
+  ctx.els.areaResult.textContent = `${message} ${String(count)} ${checks} performed.`
   ctx.els.liveStatusRegion.textContent = ctx.els.areaResult.textContent
 }
 
@@ -35,12 +32,10 @@ export const checkedStopCount = (
   ).size
 
 export const showProof = (ctx: AppContext, proof: QualifiedStop): void => {
-  const times = formatJourneyTimes(proof.journey)
-  ctx.els.areaJourney.textContent = `${proof.stop.id} ${proof.stop.name} — ${proof.journey.searchDate}. Board ${times.boarding}; ${formatServiceChain(proof.journey)}; ride ${formatRideMinutes(proof.journey.rideMs)}; workplace arrival ${times.arrival}, including final walk. Verified 500 m shading is straight-line proximity to this boarding, not a walking route from your selection.`
-  ctx.els.areaJourney.hidden = false
   showOutcome(ctx, 'Confirmed a qualifying boarding within 500 m.')
   ctx.els.resultStatusTag.textContent = 'Area confirmed'
   selectStop(ctx, proof.stop.id)
+  ctx.els.selectedStopCard.scrollIntoView({ block: 'nearest' })
   const { preview, selectedArea, inventory, areaCheck, matches } = ctx.state
   if (!preview || !selectedArea || !inventory) return
   const candidates = candidatesWithinArea(preview, selectedArea)
@@ -82,7 +77,6 @@ export const applySnapshot = (
   mapView.clearStops()
   mapView.setWorkplace(snapshot.workplace)
   for (const entry of snapshot.matches) mapView.addQualifyingStop(entry)
-  mapView.fitToMatches(snapshot.workplace, snapshot.matches)
   renderStatusBadge(els.resultStatusTag, 'saved')
   renderCounters(
     els,
@@ -93,7 +87,6 @@ export const applySnapshot = (
   renderConstraintsSummary(
     els,
     snapshot.workplace,
-    snapshot.constraints.searchDate,
     snapshot.constraints.officeStart,
     snapshot.constraints.rideCapMinutes,
   )
@@ -108,4 +101,6 @@ export const applySnapshot = (
   } else {
     selectStop(ctx, null)
   }
+  mapView.invalidateSize()
+  mapView.fitToMatches(snapshot.workplace, snapshot.matches)
 }

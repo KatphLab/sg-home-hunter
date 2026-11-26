@@ -2,6 +2,8 @@
 
 ## 2026-11-26
 
+- Start with the workplace and live arrival window, connect OneMap inline, and return to the commute from an empty preview. Remove inventory dates from the interface and show the original search date only on verified journey details, including offline.
+- Open mobile previews and saved checks on the map. Select and check a 500 m area from a dock below it, with a stop-name picker and one shared journey card.
 - Keep failed/interrupted neighbourhood probes distinct after exhaustion, preserve workplace proof when filtering station names, reset keyboard selection after map clicks, and end failed worker planning. Save only the successful circle's verified evidence with distinct-stop counters; preserve restored scope through form edits and report non-sensitive offline-storage diagnostics.
 - Continue neighbourhood checks in batches of at most three new planned departures, without repeating checked departures across overlapping areas. Reopen the last successful checked area and its verified journey evidence offline; estimates and unsuccessful checks stay unsaved.
 - Add **Check within 500 m**: verify at most three planned departures, reuse same-search actual boarding evidence and stop normally on the first in-area proof. Show exact journeys outside the map for keyboard/mobile use; distinguish empty estimates, bounded misses, routing/sign-in errors and cancellation. Remove the obsolete global scheduler and its scheduler-only tests; retain qualification-rule tests and the existing offline snapshot loader without writing partial checks.

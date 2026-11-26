@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#1B5E4B" />
     <title>House Hunter: Singapore Commute Zones</title>
     <link rel="manifest" href="./manifest.webmanifest" />
@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body data-mobile-view="search">
-    <a class="skip-link" href="#qualifying-stops-list">Skip to qualifying stops list</a>
+    <a class="skip-link" href="#workspace">Skip to workspace</a>
 
     <header class="app-header">
       <div class="brand-group">
@@ -23,19 +23,101 @@
         <h1 class="brand-title">House Hunter</h1>
       </div>
 
-      <div class="header-meta">
-        <span id="connectivity-badge" class="status-tag status-tag--online">Online</span>
-        <span id="inventory-badge" class="meta-pill tabular">Inventory: loading…</span>
-      </div>
+      <span id="connectivity-badge" class="status-tag status-tag--online">Online</span>
     </header>
 
     <div id="offline-banner" class="offline-banner" role="status" hidden>
       Offline: showing your last completed search. New searches require an internet connection.
     </div>
 
-    <main class="workspace">
+    <main class="workspace" id="workspace" tabindex="-1">
       <aside class="rail" aria-label="Search controls and qualifying stops">
-        <section class="panel-section" id="section-account" aria-labelledby="heading-account">
+        <section class="panel-section" id="section-search" aria-labelledby="heading-search">
+          <div class="section-head">
+            <h2 id="heading-search" tabindex="-1">Where do you work?</h2>
+          </div>
+
+          <form id="search-form" class="stack-sm">
+            <fieldset class="segmented-fieldset">
+              <legend class="sr-only">Workplace type</legend>
+              <label class="segmented-option">
+                <input type="radio" name="workplace-kind" value="postal" checked />
+                <span>Postal code</span>
+              </label>
+              <label class="segmented-option">
+                <input type="radio" name="workplace-kind" value="station" />
+                <span>MRT / LRT station</span>
+              </label>
+            </fieldset>
+
+            <div id="postal-field-group" class="field">
+              <label for="postal-input">Six-digit Singapore postal code</label>
+              <input
+                id="postal-input"
+                type="text"
+                inputmode="numeric"
+                maxlength="6"
+                placeholder="e.g. 018989"
+                autocomplete="postal-code"
+              />
+            </div>
+
+            <div id="station-field-group" class="stack-xs" hidden>
+              <label class="field">
+                <span>Station name or ID</span>
+                <input
+                  id="station-filter-input"
+                  type="search"
+                  placeholder="Type station ID or name, e.g. NS17 or Bishan"
+                />
+              </label>
+              <label class="field">
+                <span>Choose the station and line</span>
+                <select id="station-select"></select>
+              </label>
+            </div>
+
+            <div class="field-row-2">
+              <label class="field">
+                <span>Office start</span>
+                <input id="office-start-input" type="time" value="09:00" required />
+              </label>
+              <label class="field">
+                <span>Ride cap (min)</span>
+                <input
+                  id="ride-cap-input"
+                  type="number"
+                  min="1"
+                  max="180"
+                  step="1"
+                  value="30"
+                  required
+                />
+              </label>
+            </div>
+            <p id="commute-hint" class="field-hint tabular" aria-live="polite"></p>
+
+            <p class="keep-open-notice" role="note">
+              <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="1.75" />
+                <path d="M10 6v5m0 3h.01" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+              </svg>
+              <span>Keep the app open while searching. The preview shows estimates, not verified journeys.</span>
+            </p>
+
+            <div class="action-row">
+              <button id="start-search-btn" type="submit" class="btn btn--primary" disabled>
+                Connect OneMap to preview
+              </button>
+              <button id="stop-search-btn" type="button" class="btn btn--danger" hidden>
+                Stop preview
+              </button>
+            </div>
+          </form>
+
+          <p id="search-error" class="inline-alert inline-alert--error" role="alert" hidden></p>
+        </section>
+        <section class="panel-section" id="section-account" aria-labelledby="heading-account" hidden>
           <div class="section-head">
             <h2 id="heading-account">OneMap account</h2>
             <span id="account-status-pill" class="status-tag status-tag--muted">Not connected</span>
@@ -80,155 +162,95 @@
           <p id="auth-error" class="inline-alert inline-alert--error" role="alert" hidden></p>
         </section>
 
-        <section class="panel-section" id="section-search" aria-labelledby="heading-search">
-          <div class="section-head">
-            <h2 id="heading-search">Workplace &amp; commute</h2>
-          </div>
-
-          <form id="search-form" class="stack-sm">
-            <fieldset class="segmented-fieldset">
-              <legend class="sr-only">Workplace type</legend>
-              <label class="segmented-option">
-                <input type="radio" name="workplace-kind" value="postal" checked />
-                <span>Postal code</span>
-              </label>
-              <label class="segmented-option">
-                <input type="radio" name="workplace-kind" value="station" />
-                <span>MRT / LRT station</span>
-              </label>
-            </fieldset>
-
-            <div id="postal-field-group" class="field">
-              <label for="postal-input">Six-digit Singapore postal code</label>
-              <input
-                id="postal-input"
-                type="text"
-                inputmode="numeric"
-                maxlength="6"
-                placeholder="e.g. 018989"
-                autocomplete="postal-code"
-              />
+        <div class="check-dock">
+          <section id="selected-stop-card" class="panel-section journey-card" aria-labelledby="heading-journey" hidden>
+            <div class="journey-card-head">
+              <div class="journey-title-group">
+                <span id="selected-stop-id" class="stop-plaque tabular"></span>
+                <div>
+                  <h2 id="heading-journey" class="journey-stop-name">
+                    <span id="selected-stop-action"></span>
+                    <span id="selected-stop-name">Selected stop</span>
+                  </h2>
+                  <p id="selected-stop-kind" class="journey-stop-kind"></p>
+                </div>
+              </div>
+              <button id="close-journey-card" type="button" class="btn btn--ghost btn--compact" aria-label="Close journey details">
+                Close
+              </button>
             </div>
 
-            <div id="station-field-group" class="stack-xs" hidden>
-              <label class="field">
-                <span>Filter MRT / LRT stations</span>
-                <input
-                  id="station-filter-input"
-                  type="search"
-                  placeholder="Type station ID or name, e.g. NS17 or Bishan"
-                />
-              </label>
-              <label class="field">
-                <span>Exact line-specific station</span>
-                <select id="station-select"></select>
-              </label>
-            </div>
-
-            <div class="field-row-2">
-              <label class="field">
-                <span>Office start</span>
-                <input id="office-start-input" type="time" value="09:00" required />
-              </label>
-              <label class="field">
-                <span>Ride cap (min)</span>
-                <input
-                  id="ride-cap-input"
-                  type="number"
-                  min="1"
-                  max="180"
-                  step="1"
-                  value="30"
-                  required
-                />
-              </label>
-            </div>
-            <p class="field-hint">
-              Ride cap counts time aboard vehicles only, excluding walking and transfers.
-              To speed up search, we check stops within an estimated radius (13.7 km for 30 minutes). Faster journeys from farther away may be missed.
+            <p class="journey-services-row">
+              <span class="journey-services-label">Services</span>
+              <strong id="selected-services">None</strong>
             </p>
 
-            <dl class="presearch-facts tabular">
-              <div class="fact-item">
-                <dt>Search date</dt>
-                <dd id="planned-search-date">Pending</dd>
+            <dl class="journey-metrics tabular">
+              <div>
+                <dt>Boarding</dt>
+                <dd id="selected-boarding-time">None</dd>
               </div>
-              <div class="fact-item">
-                <dt>Inventory date</dt>
-                <dd id="planned-inventory-date">Loading</dd>
+              <div>
+                <dt>In vehicle</dt>
+                <dd id="selected-ride-duration">None</dd>
+              </div>
+              <div>
+                <dt>Arrival at work</dt>
+                <dd id="selected-arrival-time">None</dd>
               </div>
             </dl>
 
-            <p class="keep-open-notice" role="note">
-              <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
-                <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="1.75" />
-                <path d="M10 6v5m0 3h.01" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
-              </svg>
-              <span>Preview estimates locally, then choose a neighbourhood. Estimates are not verified journeys.</span>
-            </p>
+            <p class="journey-disclaimer"><time id="selected-journey-date" class="tabular"></time></p>
+            <p id="selected-journey-disclaimer" class="journey-disclaimer"></p>
+          </section>
 
+          <section class="panel-section stack-sm" id="section-preview" aria-labelledby="heading-preview" hidden>
+            <h2 id="heading-preview" tabindex="-1">Estimated stops</h2>
+            <p id="preview-summary" class="field-hint"></p>
+            <button id="edit-commute-btn" class="btn btn--secondary" type="button" hidden>Edit commute</button>
+            <p id="area-summary" role="status" aria-live="polite"></p>
+            <details id="area-picker" class="area-picker">
+              <summary>Find a stop by name or ID</summary>
+              <div class="stack-xs">
+                <label class="field">
+                  <span class="sr-only">Filter stops by name or ID</span>
+                  <input id="area-stop-filter" type="search" placeholder="Stop name or ID" />
+                </label>
+                <label class="field">
+                  <span>Centre the 500 m area on a stop</span>
+                  <select id="area-stop-select" size="4" aria-describedby="area-summary"></select>
+                </label>
+              </div>
+            </details>
             <div class="action-row">
-              <button id="start-search-btn" type="submit" class="btn btn--primary" disabled>
-                Preview estimated stops
-              </button>
-              <button id="stop-search-btn" type="button" class="btn btn--danger" hidden>
-                Stop preview
-              </button>
+              <button id="check-area-btn" type="button" class="btn btn--primary" disabled>Check within 500 m</button>
+              <button id="check-more-btn" type="button" class="btn btn--primary" hidden>Check more departures</button>
+              <button id="stop-area-btn" type="button" class="btn btn--danger" hidden>Stop</button>
             </div>
-          </form>
+            <p id="area-result" role="status" aria-live="polite" tabindex="-1" hidden></p>
+          </section>
 
-          <p id="search-error" class="inline-alert inline-alert--error" role="alert" hidden></p>
-        </section>
-
-        <section class="panel-section" id="section-progress" aria-labelledby="heading-progress">
-          <div class="section-head">
-            <h2 id="heading-progress">Search status</h2>
-            <span id="result-status-tag" class="status-tag status-tag--muted">No search yet</span>
-          </div>
-
-          <div id="live-status-region" class="sr-only" aria-live="polite"></div>
-
-          <div class="ledger-counts tabular">
-            <div class="ledger-cell">
-              <span class="ledger-label">Stops tried</span>
-              <strong id="stops-tried-value" class="ledger-value">0 / 0</strong>
+          <section class="panel-section" id="section-progress" aria-labelledby="heading-progress">
+            <div class="section-head">
+              <h2 id="heading-progress">Search status</h2>
+              <span id="result-status-tag" class="status-tag status-tag--muted">No search yet</span>
             </div>
-            <div class="ledger-cell">
-              <span class="ledger-label">Qualifying stops</span>
-              <strong id="stops-matched-value" class="ledger-value">0</strong>
+            <div class="ledger-counts tabular">
+              <div class="ledger-cell">
+                <span class="ledger-label">Stops tried</span>
+                <strong id="stops-tried-value" class="ledger-value">0 / 0</strong>
+              </div>
+              <div class="ledger-cell">
+                <span class="ledger-label">Qualifying stops</span>
+                <strong id="stops-matched-value" class="ledger-value">0</strong>
+              </div>
             </div>
-          </div>
-
-          <p id="active-constraints-summary" class="constraints-summary tabular">
-            Submit a workplace to preview estimated stops without routing requests.
-          </p>
-        </section>
-
-        <section class="panel-section stack-sm" id="section-preview" aria-labelledby="heading-preview" hidden>
-          <h2 id="heading-preview">Choose a neighbourhood</h2>
-          <p id="preview-summary"></p>
-          <p class="field-hint">
-            Blue points: estimated ride at least 10 minutes below your cap.
-            Amber points: less than 10 minutes below. These are time bands, not confidence scores.
-            Estimates do not establish arrival times or housing-search zones.
-          </p>
-          <label class="field">
-            <span>Find an area centre by stop name or ID</span>
-            <input id="area-stop-filter" type="search" placeholder="Stop name or ID" />
-          </label>
-          <label class="field">
-            <span>Centre the 500 m area on a stop</span>
-            <select id="area-stop-select" size="4" aria-describedby="area-summary"></select>
-          </label>
-          <p id="area-summary" class="constraints-summary" role="status" aria-live="polite"></p>
-          <div class="action-row">
-            <button id="check-area-btn" type="button" class="btn btn--primary" disabled>Check within 500 m</button>
-            <button id="check-more-btn" type="button" class="btn btn--primary" hidden>Check more departures</button>
-            <button id="stop-area-btn" type="button" class="btn btn--danger" hidden>Stop</button>
-          </div>
-          <p id="area-result" role="status" aria-live="polite" hidden></p>
-          <p id="area-journey" class="constraints-summary tabular" hidden></p>
-        </section>
+            <p id="active-constraints-summary" class="constraints-summary tabular">
+              Submit a workplace to preview estimated stops without routing requests.
+            </p>
+          </section>
+        </div>
+        <div id="live-status-region" class="sr-only" aria-live="polite"></div>
 
         <section class="panel-section stops-section" id="section-stops" aria-labelledby="heading-stops">
           <div class="section-head">
@@ -258,7 +280,8 @@
       <section class="map-stage" aria-label="Housing-search zone map">
         <div id="map" class="map-canvas"></div>
 
-        <aside class="map-legend" aria-label="Map legend">
+        <details class="map-legend">
+          <summary>Map key</summary>
           <div class="legend-row">
             <span class="legend-swatch legend-swatch--estimate-margin" aria-hidden="true"></span>
             <span>Estimate: at least 10 min below cap</span>
@@ -279,62 +302,17 @@
             <span class="legend-swatch legend-swatch--workplace" aria-hidden="true"></span>
             <span>Workplace</span>
           </div>
+          <p class="legend-note">Estimates cover a limited radius around work. Faster journeys from farther away may be missed.</p>
           <p class="legend-note">
             Straight-line proximity, not a walking route. Unshaded areas are not proven unreachable.
           </p>
-        </aside>
+        </details>
 
-        <section
-          id="selected-stop-card"
-          class="journey-card"
-          aria-labelledby="selected-stop-name"
-          hidden
-        >
-          <div class="journey-card-head">
-            <div class="journey-title-group">
-              <span id="selected-stop-id" class="stop-plaque tabular"></span>
-              <div>
-                <h2 id="selected-stop-name" class="journey-stop-name">Selected stop</h2>
-                <p id="selected-stop-kind" class="journey-stop-kind"></p>
-              </div>
-            </div>
-            <button
-              id="close-journey-card"
-              type="button"
-              class="btn btn--ghost btn--compact"
-              aria-label="Close journey details"
-            >
-              Close
-            </button>
-          </div>
-
-          <dl class="journey-metrics tabular">
-            <div>
-              <dt>Boarding</dt>
-              <dd id="selected-boarding-time">None</dd>
-            </div>
-            <div>
-              <dt>Arrival</dt>
-              <dd id="selected-arrival-time">None</dd>
-            </div>
-            <div>
-              <dt>In vehicle</dt>
-              <dd id="selected-ride-duration">None</dd>
-            </div>
-          </dl>
-
-          <p class="journey-services-row">
-            <span class="journey-services-label">Services</span>
-            <strong id="selected-services">None</strong>
-          </p>
-
-          <p id="selected-journey-disclaimer" class="journey-disclaimer"></p>
-        </section>
       </section>
     </main>
 
     <nav class="mobile-tabs" aria-label="Mobile workspace view">
-      <button type="button" class="mobile-tab-btn" data-mobile-tab="search">Search</button>
+      <button type="button" class="mobile-tab-btn" data-mobile-tab="search" aria-current="true">New search</button>
       <button type="button" class="mobile-tab-btn" data-mobile-tab="map">Map</button>
       <button type="button" class="mobile-tab-btn" data-mobile-tab="stops">
         Stops (<span id="mobile-stops-count" class="tabular">0</span>)

@@ -131,13 +131,6 @@ select {
   white-space: nowrap;
 }
 
-.header-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .meta-pill {
   padding: 3px 8px;
   border-radius: 999px;
@@ -145,10 +138,6 @@ select {
   font-weight: 600;
   background: #134436;
   color: #ffffff;
-}
-
-.app-header .meta-pill {
-  border: 1px solid #0d3228;
 }
 
 .offline-banner {
@@ -175,6 +164,46 @@ select {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: #9ba7a2 var(--bg-concrete);
+}
+
+.check-dock {
+  display: flex;
+  flex-direction: column;
+}
+
+.check-dock:has(.status-tag--ok) #section-progress {
+  order: -1;
+}
+
+#heading-preview,
+#area-summary,
+#area-result {
+  margin: 0;
+}
+
+#heading-preview {
+  font-size: 1.12rem;
+  letter-spacing: -0.02em;
+}
+
+#area-summary,
+#area-result {
+  overflow-wrap: anywhere;
+}
+
+#section-preview .action-row:not(:has(button:not([hidden]))) {
+  display: none;
+}
+
+.area-picker summary,
+.map-legend summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.area-picker[open] summary,
+.map-legend[open] summary {
+  margin-bottom: 8px;
 }
 
 .panel-section {
@@ -289,28 +318,33 @@ select {
   outline-offset: 1px;
 }
 
-.presearch-facts {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin: 0;
-  padding: 8px 10px;
-  background: var(--surface-white);
-  border: 1px solid var(--border-rule);
-  border-radius: 6px;
+#section-search {
+  padding: 24px 20px;
 }
 
-.fact-item dt {
-  font-size: 0.74rem;
-  color: var(--ink-secondary);
-  font-weight: 600;
+#heading-search {
+  font-size: 1.55rem;
+  letter-spacing: -0.025em;
 }
 
-.fact-item dd {
-  margin: 2px 0 0;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--ink-primary);
+#search-form {
+  gap: 14px;
+}
+
+#commute-hint {
+  font-size: 0.9rem;
+}
+
+#start-search-btn {
+  flex: 1;
+  min-height: 44px;
+}
+
+@media (min-width: 901px) {
+  .rail:has(#section-preview[hidden]):has(#result-status-tag.status-tag--muted)
+    :is(#section-progress, #section-stops) {
+    display: none;
+  }
 }
 
 .keep-open-notice {
@@ -746,15 +780,7 @@ select {
 }
 
 .journey-card {
-  position: absolute;
-  right: 12px;
-  bottom: 24px;
-  z-index: 760;
-  width: min(360px, calc(100% - 24px));
-  padding: 12px 14px;
-  background: var(--surface-porcelain);
-  border-radius: 12px;
-  box-shadow: 0 8px 22px rgba(26, 34, 32, 0.2);
+  background: var(--accent-botanical-tint);
 }
 
 .journey-card-head {
@@ -807,6 +833,7 @@ select {
 
 .journey-services-row {
   margin: 0;
+  margin-top: 8px;
   font-size: 0.84rem;
   display: flex;
   flex-direction: column;
@@ -831,11 +858,32 @@ select {
 
 @media (max-width: 900px) {
   .app-header {
-    padding: 8px 12px;
+    padding: max(8px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right)) 8px
+      max(12px, env(safe-area-inset-left));
   }
 
-  .meta-pill {
-    font-size: 0.72rem;
+  .btn,
+  .segmented-option,
+  .chip-btn {
+    min-height: 44px;
+  }
+
+  .field input,
+  .field select,
+  #stop-list-filter {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  #section-account:has(#signed-in-bar:not([hidden])) .section-head {
+    margin-bottom: 4px;
+  }
+
+  .signed-in-bar {
+    padding: 0;
+    background: transparent;
+    border: none;
   }
 
   .workspace {
@@ -845,16 +893,49 @@ select {
     position: relative;
   }
 
+  body[data-mobile-view="map"] .workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
   .rail {
     height: 100%;
     border-right: none;
   }
 
   .map-stage {
-    height: 100%;
+    grid-row: 1;
+    min-height: 0;
   }
 
   body[data-mobile-view="map"] .rail {
+    display: contents;
+  }
+
+  body[data-mobile-view="map"] #section-account,
+  body[data-mobile-view="map"] #section-search,
+  body[data-mobile-view="map"] #section-stops,
+  body[data-mobile-view="map"] #section-progress:not(:has(.status-tag--ok)),
+  body[data-mobile-view="map"] #section-progress .ledger-counts {
+    display: none;
+  }
+
+  body[data-mobile-view="map"] .check-dock {
+    grid-row: 2;
+    min-height: 0;
+    max-height: 54dvh;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+    background: var(--surface-porcelain);
+    border-top: 1px solid var(--border-rule);
+  }
+
+  body[data-mobile-view="map"]
+    .check-dock:not(
+      :has(> :not([hidden], #section-progress), .status-tag--ok)
+    ) {
     display: none;
   }
 
@@ -863,6 +944,7 @@ select {
     display: none;
   }
 
+  body[data-mobile-view="search"] .check-dock,
   body[data-mobile-view="search"] .stops-section {
     display: none;
   }
@@ -880,10 +962,13 @@ select {
     grid-template-columns: repeat(3, 1fr);
     background: var(--surface-porcelain);
     border-top: 1px solid var(--border-rule);
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
   }
 
   .mobile-tab-btn {
     padding: 12px 8px;
+    min-height: 48px;
     border: none;
     background: transparent;
     font-weight: 700;
@@ -905,14 +990,35 @@ select {
     left: auto;
     bottom: auto;
     max-width: calc(100% - 64px);
-    padding: 8px 10px;
+    padding: 0 10px;
+    max-height: calc(100% - 28px);
+    overflow: auto;
   }
 
-  .journey-card {
-    right: 12px;
-    left: 12px;
-    width: auto;
-    bottom: 12px;
+  .map-legend summary {
+    display: list-item;
+    min-height: 44px;
+    padding-block: 11px;
+  }
+
+  .area-picker summary {
+    padding-block: 12px;
+  }
+}
+
+@media (600px <= width <= 900px) and (max-height: 500px) {
+  body[data-mobile-view="map"] .workspace {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  body[data-mobile-view="map"] .check-dock {
+    grid-column: 2;
+    grid-row: 1;
+    width: min(43vw, 360px);
+    max-height: none;
+    border-top: none;
+    border-left: 1px solid var(--border-rule);
   }
 }
 
