@@ -342,7 +342,11 @@ const displayPreview = (
   els.previewPanel.hidden = false
   setMobileView('map')
   mapView.invalidateSize()
-  mapView.setPreview(preview.leads, preview.constraints.rideCapMinutes)
+  mapView.setPreview(
+    preview.workplace.point,
+    preview.leads,
+    preview.constraints.rideCapMinutes,
+  )
   els.previewHeading.focus()
 }
 

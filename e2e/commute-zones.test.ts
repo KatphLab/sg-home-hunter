@@ -336,6 +336,17 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#preview-summary')).toContainText(
       '2 estimated stops',
     )
+
+    await selectArea(page, '88888')
+    const workplacePin = page.locator('.workplace-pin')
+    await expect(workplacePin).not.toBeInViewport()
+    await page.getByRole('button', { name: 'New search' }).click()
+    await rideCap.fill('1')
+    await start.click()
+    await expect(page.locator('#preview-summary')).toContainText(
+      'No estimated stops',
+    )
+    await expect(workplacePin).toBeInViewport()
   })
 
   test('checks ride-sorted departures in bounded batches without repeating overlapping probes', async ({
@@ -510,6 +521,62 @@ test.describe('House Hunter PWA acceptance', () => {
       await expect(journey).toContainText(boarding)
       expect(calls).toBe(8)
     }
+  })
+
+  test('confirms a scheduled intermediate pickup at the ride cap in one request', async ({
+    page,
+    context,
+  }) => {
+    const at = (clock: string) => Date.parse(`${SEARCH_DATE}T${clock}:00+08:00`)
+    const starts: (string | null)[] = []
+    await context.route('**/api/public/routingsvc/route*', (route) => {
+      starts.push(requestedProbe(route).start)
+      return fulfillJson(route, 200, {
+        plan: {
+          itineraries: [
+            {
+              startTime: at('08:00'),
+              endTime: at('09:00'),
+              legs: [
+                {
+                  mode: 'BUS',
+                  from: { stopCode: '11111' },
+                  routeShortName: '11',
+                  startTime: at('08:00'),
+                  endTime: at('08:40'),
+                  intermediateStops: [
+                    {
+                      stopCode: '11112',
+                      departure: at('08:20'),
+                      pickupType: 0,
+                    },
+                  ],
+                },
+                {
+                  mode: 'BUS',
+                  from: { stopCode: '03218' },
+                  routeShortName: '22',
+                  startTime: at('08:45'),
+                  endTime: at('08:55'),
+                },
+                { mode: 'WALK', startTime: at('08:55'), endTime: at('09:00') },
+              ],
+            },
+          ],
+        },
+      })
+    })
+    await previewRiver(page)
+    await page.click('#check-area-btn')
+    await expect(page.locator('#area-result')).toContainText('Confirmed')
+    await expect(page.locator('#selected-stop-id')).toHaveText('11112')
+    await expect(page.locator('#selected-boarding-time')).toHaveText('08:20')
+    await expect(page.locator('#selected-ride-duration')).toHaveText('30 min')
+    await expect(page.locator('#selected-arrival-time')).toHaveText('09:00')
+    await expect(page.locator('#selected-services')).toHaveText(
+      'Bus 11 → Bus 22',
+    )
+    expect(starts).toEqual(['1.3,103.85'])
   })
 
   test('does not confirm when the final walk ends after the arrival window', async ({

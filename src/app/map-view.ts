@@ -189,9 +189,13 @@ export class CommuteMapView {
     this.selectionLayerGroup.clearLayers()
   }
 
-  setPreview(leads: readonly BackwardLead[], rideCapMinutes: number): void {
+  setPreview(
+    workplace: Coordinates,
+    leads: readonly BackwardLead[],
+    rideCapMinutes: number,
+  ): void {
     this.clearPreview()
-    const bounds = L.latLngBounds([])
+    const bounds = L.latLngBounds([[workplace.latitude, workplace.longitude]])
     for (const lead of leads) {
       const point: [number, number] = [
         lead.stop.point.latitude,
@@ -210,9 +214,11 @@ export class CommuteMapView {
         interactive: false,
       }).addTo(this.estimateLayerGroup)
     }
-    if (bounds.isValid()) {
-      this.map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 })
-    }
+    this.map.fitBounds(bounds, {
+      padding: [40, 40],
+      maxZoom: 15,
+      animate: false,
+    })
   }
 
   setAreaSelection(point: Coordinates, focus: boolean): void {
