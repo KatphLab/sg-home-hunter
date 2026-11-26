@@ -9,7 +9,7 @@ Judgement-call engineering and review standards not directly enforced by Biome, 
 
 ## Error boundaries and user messaging
 
-- Normalize unknown thrown values to `Error` at module boundaries and preserve actionable diagnostics for developers without leaking sensitive inputs (never log or store passwords or tokens).
+- Normalize unknown thrown values to `Error` at module boundaries and preserve actionable diagnostics without leaking sensitive inputs. Never log passwords or tokens, and never store passwords. Only the OneMap access token and its expiry may be stored in `sessionStorage` to restore sign-in after a reload.
 - Keep user-facing failure copy accurate to the failure mode—never blame credentials for network, HTTP status, or response-parsing errors.
 
 ## Browser, PWA, and E2E testing

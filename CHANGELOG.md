@@ -2,6 +2,7 @@
 
 ## 2026-11-27
 
+- Keep OneMap connected when the same tab is refreshed, without saving the email or password.
 - Keep the workplace visible on the preview map even when there are no estimated stops.
 - Replace the MRT/LRT workplace dropdown with autocomplete by station name or code, including typo-tolerant suggestions and exact line selection.
 - Open the first verified journey from **Check this area**, then offer **Look for another stop here** when more departures can be checked without moving the 500 m circle.

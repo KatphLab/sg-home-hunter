@@ -106,6 +106,47 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#postal-input')).toHaveValue('018989')
   })
 
+  test('restores OneMap sign-in on reload until disconnected', async ({
+    page,
+  }) => {
+    await page.goto('/')
+    await signInViaUi(page)
+
+    await page.reload()
+    await expect(page.locator('#account-status-pill')).toHaveText('Connected')
+    await page.fill('#postal-input', '018989')
+    const lookup = page.waitForRequest('**/api/common/elastic/search*')
+    await preview(page)
+    expect(await (await lookup).headerValue('authorization')).toBe('mock-jwt')
+
+    await page.click('#signout-btn')
+    await page.reload()
+    await expect(page.locator('#start-search-btn')).toHaveText(
+      'Connect OneMap to preview',
+    )
+  })
+
+  test('does not restore an expired OneMap token', async ({
+    page,
+    context,
+  }) => {
+    const expiry = new Date('2026-05-30T09:00:00+08:00')
+    await context.route('**/api/auth/post/getToken', (route) =>
+      fulfillJson(route, 200, {
+        access_token: 'mock-jwt',
+        expiry_timestamp: expiry.getTime() / 1000,
+      }),
+    )
+    await page.goto('/')
+    await signInViaUi(page)
+
+    await page.clock.setFixedTime(expiry)
+    await page.reload()
+    await expect(page.locator('#start-search-btn')).toHaveText(
+      'Connect OneMap to preview',
+    )
+  })
+
   test('blocks duplicate postal submission during lookup and unlocks after lookup failure', async ({
     page,
   }) => {

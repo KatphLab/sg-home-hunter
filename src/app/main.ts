@@ -11,6 +11,7 @@ import {
   setMobileView,
 } from './dom-render.js'
 import { CommuteMapView } from './map-view.js'
+import { loadOneMapAccount } from './onemap-session.js'
 import {
   type AppContext,
   type AppState,
@@ -138,7 +139,7 @@ const bootstrap = async (): Promise<void> => {
     inventory: null,
     workplaceStation: null,
     networkText: null,
-    account: null,
+    account: loadOneMapAccount(),
     signingIn: false,
     matches: [],
     selectedStopId: null,

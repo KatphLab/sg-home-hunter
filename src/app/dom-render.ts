@@ -41,7 +41,6 @@ export interface AppElements {
   readonly passwordInput: HTMLInputElement
   readonly signinButton: HTMLButtonElement
   readonly signedInBar: HTMLElement
-  readonly signedInEmail: HTMLElement
   readonly signoutButton: HTMLButtonElement
   readonly authError: HTMLElement
   readonly searchHeading: HTMLElement
@@ -104,7 +103,6 @@ export const collectAppElements = (): AppElements => ({
   passwordInput: requireElementOfType('onemap-password', HTMLInputElement),
   signinButton: requireElementOfType('signin-btn', HTMLButtonElement),
   signedInBar: requireElement('signed-in-bar'),
-  signedInEmail: requireElement('signed-in-email'),
   signoutButton: requireElementOfType('signout-btn', HTMLButtonElement),
   authError: requireElement('auth-error'),
   searchHeading: requireElement('heading-search'),
@@ -387,8 +385,7 @@ export const renderAccountState = (
   }
   els.signinForm.hidden = signedIn
   els.signedInBar.hidden = !signedIn
-  if (account) {
-    els.signedInEmail.textContent = account.email
+  if (signedIn) {
     els.accountStatusPill.textContent = 'Connected'
     els.accountStatusPill.className = 'status-tag status-tag--ok'
   } else {
