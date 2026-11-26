@@ -62,19 +62,23 @@
               />
             </div>
 
-            <div id="station-field-group" class="stack-xs" hidden>
-              <label class="field">
-                <span>Station name or ID</span>
+            <div id="station-field-group" class="field" hidden>
+              <label for="station-input">Station name or ID</label>
+              <div class="station-autocomplete">
                 <input
-                  id="station-filter-input"
-                  type="search"
-                  placeholder="Type station ID or name, e.g. NS17 or Bishan"
+                  id="station-input"
+                  type="text"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-controls="station-suggestions"
+                  aria-expanded="false"
+                  autocomplete="off"
+                  disabled
+                  placeholder="e.g. NS17 or Bishan"
                 />
-              </label>
-              <label class="field">
-                <span>Choose the station and line</span>
-                <select id="station-select"></select>
-              </label>
+                <div id="station-suggestions" role="listbox" aria-label="Station suggestions" hidden></div>
+                <p id="station-search-status" class="field-hint" role="status"></p>
+              </div>
             </div>
 
             <div class="field-row-2">

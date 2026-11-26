@@ -49,8 +49,9 @@ export interface AppElements {
   readonly postalGroup: HTMLElement
   readonly postalInput: HTMLInputElement
   readonly stationGroup: HTMLElement
-  readonly stationFilterInput: HTMLInputElement
-  readonly stationSelect: HTMLSelectElement
+  readonly stationInput: HTMLInputElement
+  readonly stationSuggestions: HTMLElement
+  readonly stationSearchStatus: HTMLElement
   readonly officeStartInput: HTMLInputElement
   readonly rideCapInput: HTMLInputElement
   readonly commuteHint: HTMLElement
@@ -111,11 +112,9 @@ export const collectAppElements = (): AppElements => ({
   postalGroup: requireElement('postal-field-group'),
   postalInput: requireElementOfType('postal-input', HTMLInputElement),
   stationGroup: requireElement('station-field-group'),
-  stationFilterInput: requireElementOfType(
-    'station-filter-input',
-    HTMLInputElement,
-  ),
-  stationSelect: requireElementOfType('station-select', HTMLSelectElement),
+  stationInput: requireElementOfType('station-input', HTMLInputElement),
+  stationSuggestions: requireElement('station-suggestions'),
+  stationSearchStatus: requireElement('station-search-status'),
   officeStartInput: requireElementOfType(
     'office-start-input',
     HTMLInputElement,
@@ -179,7 +178,6 @@ export const collectAppElements = (): AppElements => ({
 export const renderStationOptions = (
   select: HTMLSelectElement,
   stations: readonly Stop[],
-  previousId: string,
 ): void => {
   const options: HTMLOptionElement[] = []
   for (const station of stations) {
@@ -189,12 +187,6 @@ export const renderStationOptions = (
     options.push(opt)
   }
   select.replaceChildren(...options)
-  if (
-    previousId.length > 0 &&
-    stations.some((station) => station.id === previousId)
-  ) {
-    select.value = previousId
-  }
 }
 
 export const renderCommuteHint = (els: AppElements): void => {

@@ -1,8 +1,4 @@
-import {
-  filterRailStations,
-  findRailStationById,
-  parseStopInventory,
-} from '@lib/inventory.js'
+import { parseStopInventory } from '@lib/inventory.js'
 import { loadCompletedResult } from '@lib/saved-result-store.js'
 import { normalizeError } from '@utils/guards.js'
 import { checkSelectedArea } from './area-check.js'
@@ -12,7 +8,6 @@ import {
   getSelectedWorkplaceKind,
   renderCommuteHint,
   renderInlineError,
-  renderStationOptions,
   setMobileView,
 } from './dom-render.js'
 import { CommuteMapView } from './map-view.js'
@@ -31,6 +26,7 @@ import {
   syncAccountUi,
   syncConnectivity,
 } from './search-controller.js'
+import { wireStationAutocomplete } from './station-autocomplete.js'
 
 const wireUiEvents = (ctx: AppContext): void => {
   const { els, mapView, state } = ctx
@@ -42,12 +38,12 @@ const wireUiEvents = (ctx: AppContext): void => {
     setMobileView('search')
     const input =
       getSelectedWorkplaceKind() === 'station'
-        ? els.stationFilterInput
+        ? els.stationInput
         : els.postalInput
     input.focus()
   })
   const invalidateSearchInput = (event: Event): void => {
-    if (event.target !== els.stationFilterInput) invalidatePreview(ctx)
+    if (event.target !== els.stationInput) invalidatePreview(ctx)
   }
   els.searchForm.addEventListener('input', invalidateSearchInput)
   els.searchForm.addEventListener('change', invalidateSearchInput)
@@ -140,6 +136,7 @@ const bootstrap = async (): Promise<void> => {
   const els = collectAppElements()
   const state: AppState = {
     inventory: null,
+    workplaceStation: null,
     networkText: null,
     account: null,
     signingIn: false,
@@ -194,25 +191,10 @@ const bootstrap = async (): Promise<void> => {
     const inventory = parseStopInventory(stopsText)
     state.inventory = inventory
     state.networkText = networkText
-    renderStationOptions(
-      els.stationSelect,
-      filterRailStations(inventory, ''),
-      '',
-    )
-    els.stationFilterInput.addEventListener('input', () => {
-      const selectedId = els.stationSelect.value
-      const matches = filterRailStations(
-        inventory,
-        els.stationFilterInput.value,
-      )
-      const selected = matches.some((station) => station.id === selectedId)
-        ? null
-        : findRailStationById(inventory, selectedId)
-      renderStationOptions(
-        els.stationSelect,
-        selected ? [selected, ...matches] : matches,
-        selectedId,
-      )
+    wireStationAutocomplete(els, inventory, (station) => {
+      if (state.workplaceStation?.id === station.id) return
+      state.workplaceStation = station
+      invalidatePreview(ctx)
     })
     syncConnectivity(ctx)
   } catch (error) {

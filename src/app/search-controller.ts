@@ -3,6 +3,7 @@ import type {
   Coordinates,
   OneMapAccount,
   QualifiedStop,
+  Stop,
   StopInventory,
   Workplace,
 } from '@lib/commute-types.js'
@@ -37,6 +38,7 @@ import {
   type NeighbourhoodPreview,
 } from './neighbourhood-preview.js'
 import { planInWorker } from './plan-in-worker.js'
+import { stationLabel } from './station-autocomplete.js'
 
 export interface AreaCheckState {
   readonly checkedDepartures: Set<string>
@@ -47,6 +49,7 @@ export interface AreaCheckState {
 }
 export interface AppState {
   inventory: StopInventory | null
+  workplaceStation: Stop | null
   networkText: string | null
   account: OneMapAccount | null
   signingIn: boolean
@@ -115,20 +118,17 @@ export const selectStop = (ctx: AppContext, stopId: string | null): void => {
 
 const resolveWorkplaceFromForm = (
   els: AppElements,
-  inventory: StopInventory,
+  station: Stop | null,
   account: OneMapAccount,
 ): Promise<Workplace> => {
   if (getSelectedWorkplaceKind() === 'station') {
-    const station = findRailStationById(inventory, els.stationSelect.value)
-    if (!station) {
-      return Promise.reject(
-        new Error('Select a valid MRT or LRT station from the list.'),
-      )
+    if (!station || els.stationInput.value !== stationLabel(station)) {
+      return Promise.reject(new Error('Choose a station from the suggestions.'))
     }
     return Promise.resolve({
       kind: 'station',
       stationId: station.id,
-      label: `${station.id} ${station.name}`,
+      label: stationLabel(station),
       point: station.point,
     })
   }
@@ -222,7 +222,7 @@ export const refreshAreaStopPicker = (ctx: AppContext): void => {
         `${stop.id} ${stop.name}`.toLowerCase().includes(query),
       )
     : (state.preview?.leads.map((lead) => lead.stop) ?? [])
-  renderStationOptions(els.areaStopSelect, stops, '')
+  renderStationOptions(els.areaStopSelect, stops)
   els.areaStopSelect.selectedIndex = -1
 }
 
@@ -409,7 +409,11 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   els.stopSearchButton.hidden = false
   let planning = false
   try {
-    const workplace = await resolveWorkplaceFromForm(els, inventory, account)
+    const workplace = await resolveWorkplaceFromForm(
+      els,
+      state.workplaceStation,
+      account,
+    )
     if (controller !== state.abortController) {
       return
     }

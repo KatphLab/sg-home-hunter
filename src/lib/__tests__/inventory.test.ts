@@ -25,13 +25,21 @@ describe('inventory', () => {
     expect(findRailStationById(inv, 'ns17')).toBeNull()
   })
 
-  it('filters rail stations by exact ID or name', () => {
+  it('finds exact and mistyped MRT/LRT station names and codes', () => {
     const inv = parseStopInventory(SAMPLE_TSV)
     expect(filterRailStations(inv, 'bishan').map((s) => s.id)).toEqual([
       'CC15',
       'NS17',
     ])
     expect(filterRailStations(inv, 'ns17').map((s) => s.id)).toEqual(['NS17'])
+    for (const query of ['Bihsan', 'Bishn', 'Bshn']) {
+      expect(filterRailStations(inv, query).map((s) => s.id)).toEqual([
+        'CC15',
+        'NS17',
+      ])
+    }
+    expect(filterRailStations(inv, 'hotel')).toEqual([])
+    expect(filterRailStations(inv, '  ')).toEqual([])
   })
 
   it('orders workplace station results by the numeric part of the code', () => {
@@ -44,12 +52,10 @@ describe('inventory', () => {
       'NS11',
       'NS17',
     ])
-    expect(filterRailStations(inv, '').map((s) => s.id)).toEqual([
-      'CC15',
-      'NS1',
-      'NS2',
-      'NS11',
+    expect(filterRailStations(inv, 'ns17').map((s) => s.id)).toEqual([
       'NS17',
+      'NS1',
+      'NS11',
     ])
   })
 

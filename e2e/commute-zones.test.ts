@@ -568,7 +568,7 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('.stop-row-btn')).toHaveCount(0)
   })
 
-  test('station filtering preserves the exact zero-ride proof and checked departures', async ({
+  test('station autocomplete selects the exact line and preserves proof while typing', async ({
     page,
     context,
   }) => {
@@ -579,7 +579,23 @@ test.describe('House Hunter PWA acceptance', () => {
     })
     await page.goto('/')
     await page.click('input[name="workplace-kind"][value="station"]')
-    await page.selectOption('#station-select', 'NS17')
+    const station = page.getByRole('combobox', { name: 'Station name or ID' })
+    const suggestions = page.getByRole('listbox', {
+      name: 'Station suggestions',
+    })
+    await expect(suggestions).toBeHidden()
+    await station.fill('no such station')
+    await expect(page.getByText('No matching stations.')).toBeVisible()
+    await station.fill('Bihsan')
+    await expect(suggestions.getByRole('option')).toHaveText([
+      'CC15 Bishan',
+      'NS17 Bishan',
+    ])
+    await station.press('ArrowDown')
+    await station.press('ArrowDown')
+    await station.press('Enter')
+    await expect(station).toHaveValue('NS17 Bishan')
+    await expect(suggestions).toBeHidden()
     await signInViaUi(page)
     await preview(page)
     await expect(page.locator('#stops-matched-value')).toHaveText('1')
@@ -602,8 +618,8 @@ test.describe('House Hunter PWA acceptance', () => {
     await selectArea(page, '65009')
     await page.click('#check-area-btn')
     await expect(page.locator('#area-result')).toContainText('3 checks')
-    await page.fill('#station-filter-input', 'Marymount')
-    await expect(page.locator('#station-select')).toHaveValue('NS17')
+    await station.fill('Marymount')
+    await expect(suggestions.getByRole('option')).toHaveText(['CC16 Marymount'])
     await expect(
       page.locator('.stop-row-btn[data-stop-id="NS17"]'),
     ).toHaveCount(1)
@@ -612,11 +628,18 @@ test.describe('House Hunter PWA acceptance', () => {
       '1 check performed',
     )
     expect(routingCalls).toBe(4)
-    await page.selectOption('#station-select', 'CC16')
+    await station.fill('Marym')
+    await suggestions.getByRole('option', { name: 'CC16 Marymount' }).click()
+    await expect(station).toHaveValue('CC16 Marymount')
     await expect(page.locator('#section-preview')).toBeHidden()
     await expect(page.locator('#selected-stop-card')).toBeHidden()
     await expect(page.locator('.stop-row-btn')).toHaveCount(0)
     await expect(page.locator('.leaflet-commuteZone-pane path')).toHaveCount(0)
+    await station.fill('Bishan')
+    await page.click('#start-search-btn')
+    await expect(page.locator('#search-error')).toHaveText(
+      'Choose a station from the suggestions.',
+    )
   })
 
   test('invalidates in-flight lookup on edits, stop, and disconnect', async ({

@@ -94,18 +94,61 @@ export const findRailStationById = (
     (stop) => stop.kind === 'rail' && stop.id === stationId,
   ) ?? null
 
+const isSubsequence = (query: string, text: string): boolean => {
+  let from = 0
+  for (const char of query) {
+    const index = text.indexOf(char, from)
+    if (index === -1) return false
+    from = index + 1
+  }
+  return true
+}
+
+const isOneEditAway = (query: string, text: string): boolean => {
+  if (Math.abs(query.length - text.length) > 1) return false
+  const [shorter, longer] =
+    query.length <= text.length ? [query, text] : [text, query]
+  let i = 0
+  while (i < shorter.length && shorter[i] === longer[i]) i += 1
+  if (shorter.length !== longer.length) {
+    return shorter.slice(i) === longer.slice(i + 1)
+  }
+  return (
+    shorter.slice(i + 1) === longer.slice(i + 1) ||
+    (shorter[i] === longer[i + 1] &&
+      shorter[i + 1] === longer[i] &&
+      shorter.slice(i + 2) === longer.slice(i + 2))
+  )
+}
+
+const stationMatchRank = (query: string, text: string): number => {
+  if (text === query) return 0
+  if (text.startsWith(query)) return 1
+  if (text.includes(query)) return 2
+  if (query.length >= 3 && isOneEditAway(query, text)) return 3
+  if (query.length >= 3 && isSubsequence(query, text)) return 4
+  return Number.POSITIVE_INFINITY
+}
+
 export const filterRailStations = (
   inventory: StopInventory,
   query: string,
 ): readonly Stop[] => {
   const normalized = query.trim().toLowerCase()
-  return inventory.stops
-    .filter(
-      (stop) =>
-        stop.kind === 'rail' &&
-        (normalized === '' ||
-          stop.id.toLowerCase().includes(normalized) ||
-          stop.name.toLowerCase().includes(normalized)),
+  if (!normalized) return []
+  const matches: { stop: Stop; rank: number }[] = []
+  for (const stop of inventory.stops) {
+    if (stop.kind !== 'rail') continue
+    const rank = Math.min(
+      stationMatchRank(normalized, stop.id.toLowerCase()),
+      stationMatchRank(normalized, stop.name.toLowerCase()),
     )
-    .sort((a, b) => stationCodeCollator.compare(a.id, b.id))
+    if (rank !== Number.POSITIVE_INFINITY) matches.push({ stop, rank })
+  }
+  return matches
+    .sort(
+      (a, b) =>
+        a.rank - b.rank || stationCodeCollator.compare(a.stop.id, b.stop.id),
+    )
+    .map(({ stop }) => stop)
 }
