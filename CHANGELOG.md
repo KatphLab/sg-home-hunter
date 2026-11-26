@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-11-27
+
+- Keep the selected workplace while filtering stations, block duplicate OneMap sign-ins, and leave the saved stop list visible when a workplace lookup fails.
+- Fetch fresh app files when installing an updated offline cache.
+
 ## 2026-11-26
 
 - Start with the workplace and live arrival window, connect OneMap inline, and return to the commute from an empty preview. Remove inventory dates from the interface and show the original search date only on verified journey details, including offline.

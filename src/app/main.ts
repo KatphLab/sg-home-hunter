@@ -1,4 +1,8 @@
-import { filterRailStations, parseStopInventory } from '@lib/inventory.js'
+import {
+  filterRailStations,
+  findRailStationById,
+  parseStopInventory,
+} from '@lib/inventory.js'
 import { loadCompletedResult } from '@lib/saved-result-store.js'
 import { normalizeError } from '@utils/guards.js'
 import { checkSelectedArea } from './area-check.js'
@@ -138,6 +142,7 @@ const bootstrap = async (): Promise<void> => {
     inventory: null,
     networkText: null,
     account: null,
+    signingIn: false,
     matches: [],
     selectedStopId: null,
     kindFilter: 'all',
@@ -195,10 +200,18 @@ const bootstrap = async (): Promise<void> => {
       '',
     )
     els.stationFilterInput.addEventListener('input', () => {
+      const selectedId = els.stationSelect.value
+      const matches = filterRailStations(
+        inventory,
+        els.stationFilterInput.value,
+      )
+      const selected = matches.some((station) => station.id === selectedId)
+        ? null
+        : findRailStationById(inventory, selectedId)
       renderStationOptions(
         els.stationSelect,
-        filterRailStations(inventory, els.stationFilterInput.value),
-        els.stationSelect.value,
+        selected ? [selected, ...matches] : matches,
+        selectedId,
       )
     })
     syncConnectivity(ctx)

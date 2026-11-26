@@ -78,19 +78,31 @@ test.describe('House Hunter PWA acceptance', () => {
   test('reports unreadable sign-in response without blaming password', async ({
     page,
   }) => {
-    await page
-      .context()
-      .route('**/api/auth/post/getToken', (route) => route.abort('failed'))
+    const pending = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    await page.context().route('**/api/auth/post/getToken', async (route) => {
+      pending.resolve()
+      await release.promise
+      await route.abort('failed')
+    })
 
     await page.goto('/')
     await page.fill('#postal-input', '018989')
     await page.click('#start-search-btn')
     await submitOneMapCredentials(page)
+    try {
+      await pending.promise
+      await page.fill('#ride-cap-input', '31')
+      await expect(page.locator('#signin-btn')).toBeDisabled()
+    } finally {
+      release.resolve()
+    }
 
     const alert = page.locator('#auth-error')
     await expect(alert).toBeVisible()
     await expect(alert).toContainText('Couldn’t sign in to OneMap.')
     await expect(alert).not.toContainText('Wrong password')
+    await expect(page.locator('#signin-btn')).toBeEnabled()
     await expect(page.locator('#postal-input')).toHaveValue('018989')
   })
 
@@ -582,7 +594,7 @@ test.describe('House Hunter PWA acceptance', () => {
     await selectArea(page, '65009')
     await page.click('#check-area-btn')
     await expect(page.locator('#area-result')).toContainText('3 checks')
-    await page.fill('#station-filter-input', 'Bishan')
+    await page.fill('#station-filter-input', 'Marymount')
     await expect(page.locator('#station-select')).toHaveValue('NS17')
     await expect(
       page.locator('.stop-row-btn[data-stop-id="NS17"]'),
@@ -592,7 +604,7 @@ test.describe('House Hunter PWA acceptance', () => {
       '1 check performed',
     )
     expect(routingCalls).toBe(4)
-    await page.selectOption('#station-select', 'CC15')
+    await page.selectOption('#station-select', 'CC16')
     await expect(page.locator('#section-preview')).toBeHidden()
     await expect(page.locator('#selected-stop-card')).toBeHidden()
     await expect(page.locator('.stop-row-btn')).toHaveCount(0)
@@ -694,8 +706,17 @@ test.describe('House Hunter PWA acceptance', () => {
         JSON.stringify(snapshot),
       )
     }, saved)
-    await page.fill('#postal-input', '018989')
+    await page.reload()
     await signInViaUi(page)
+    await page.fill('#postal-input', '123')
+    await page.click('#start-search-btn')
+    await expect(page.locator('#search-error')).toContainText('6-digit')
+    await expect(page.locator('#result-status-tag')).toHaveText(
+      'Saved offline result',
+    )
+    await expect(page.locator('.stop-row-btn')).toBeVisible()
+    await page.fill('#postal-input', '018989')
+
     await preview(page)
     await expect(page.locator('.stop-row-btn')).toHaveCount(0)
     const lookupGate = Promise.withResolvers<void>()

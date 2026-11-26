@@ -366,13 +366,14 @@ export const renderConnectivityState = (
   els: AppElements,
   online: boolean,
   canStartSearch: boolean,
+  signingIn: boolean,
 ): void => {
   els.offlineBanner.hidden = online
   els.connectivityBadge.textContent = online ? 'Online' : 'Offline'
   els.connectivityBadge.className = online
     ? 'status-tag status-tag--online'
     : 'status-tag status-tag--offline'
-  els.signinButton.disabled = !online
+  els.signinButton.disabled = !online || signingIn
   els.startSearchButton.disabled = !canStartSearch
 }
 

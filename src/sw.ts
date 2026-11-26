@@ -1,4 +1,4 @@
-const CACHE_NAME = 'house-hunter-shell-v12'
+const CACHE_NAME = 'house-hunter-shell-v13'
 const PRECACHE_PATHS = [
   './',
   './index.html',
@@ -31,7 +31,9 @@ const isFetchEvent = (event: Event): event is FetchEventLike =>
 
 const precacheShell = async (): Promise<void> => {
   const cache = await caches.open(CACHE_NAME)
-  await cache.addAll(PRECACHE_PATHS)
+  await cache.addAll(
+    PRECACHE_PATHS.map((path) => new Request(path, { cache: 'reload' })),
+  )
 }
 
 const clearOldCaches = async (): Promise<void> => {

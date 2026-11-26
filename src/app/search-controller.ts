@@ -49,6 +49,7 @@ export interface AppState {
   inventory: StopInventory | null
   networkText: string | null
   account: OneMapAccount | null
+  signingIn: boolean
   matches: readonly QualifiedStop[]
   selectedStopId: string | null
   kindFilter: StopListKindFilter
@@ -73,7 +74,7 @@ export const syncConnectivity = (ctx: AppContext): void => {
     state.inventory !== null &&
     state.networkText !== null &&
     state.abortController === null
-  renderConnectivityState(els, online, canStart)
+  renderConnectivityState(els, online, canStart, state.signingIn)
   const canCheck = canStart && state.account !== null
   els.checkAreaButton.disabled =
     !canCheck || !state.selectedArea || state.areaCheck?.hasRun !== false
@@ -142,6 +143,8 @@ const resolveWorkplaceFromForm = (
 
 export const handleSignIn = async (ctx: AppContext): Promise<void> => {
   const { els, state } = ctx
+  if (state.signingIn) return
+  state.signingIn = true
   renderInlineError(els.authError, null)
   els.signinButton.disabled = true
   try {
@@ -159,6 +162,7 @@ export const handleSignIn = async (ctx: AppContext): Promise<void> => {
       normalizeError(error, 'Couldn’t sign in to OneMap.').message,
     )
   } finally {
+    state.signingIn = false
     syncConnectivity(ctx)
   }
 }
@@ -339,8 +343,12 @@ const displayPreview = (
   els.previewHeading.focus()
 }
 
-const showPreviewError = (ctx: AppContext, error: unknown): void => {
-  renderStatusBadge(ctx.els.resultStatusTag, 'idle')
+const showPreviewError = (
+  ctx: AppContext,
+  error: unknown,
+  planning: boolean,
+): void => {
+  if (planning) renderStatusBadge(ctx.els.resultStatusTag, 'idle')
   ctx.els.liveStatusRegion.textContent = 'Unable to prepare preview.'
   if (error instanceof OneMapAuthError) {
     ctx.state.account = null
@@ -396,11 +404,13 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
   state.abortController = controller
   syncConnectivity(ctx)
   els.stopSearchButton.hidden = false
+  let planning = false
   try {
     const workplace = await resolveWorkplaceFromForm(els, inventory, account)
     if (controller !== state.abortController) {
       return
     }
+    planning = true
     state.matches = []
     mapViewForPlanning(ctx, workplace)
     const plan = await planInWorker(
@@ -417,7 +427,7 @@ export const handleSearchSubmit = async (ctx: AppContext): Promise<void> => {
     if (controller !== state.abortController) {
       return
     }
-    showPreviewError(ctx, error)
+    showPreviewError(ctx, error, planning)
   } finally {
     if (controller === state.abortController) {
       state.abortController = null
