@@ -40,6 +40,7 @@ export interface AreaCheckState {
   readonly checkedDepartures: Set<string>
   checksPerformed: number
   hasRun: boolean
+  hasMore: boolean
 }
 export interface AppState {
   inventory: StopInventory | null
@@ -75,6 +76,8 @@ export const syncConnectivity = (ctx: AppContext): void => {
   renderConnectivityState(els, online, canStart)
   els.checkAreaButton.disabled =
     !canStart || !state.selectedArea || state.areaCheck?.hasRun !== false
+  els.checkMoreButton.hidden = !state.areaCheck?.hasMore || state.isSearching
+  els.checkMoreButton.disabled = !canStart
 }
 
 export const syncAccountUi = (ctx: AppContext): void => {
@@ -179,9 +182,11 @@ const resetAreaSelection = (ctx: AppContext): void => {
   if (ctx.state.areaCheck) {
     ctx.state.areaCheck.checksPerformed = 0
     ctx.state.areaCheck.hasRun = false
+    ctx.state.areaCheck.hasMore = false
   }
   ctx.els.areaResult.hidden = true
   ctx.els.areaResult.textContent = ''
+  ctx.els.checkMoreButton.hidden = true
   ctx.els.areaJourney.hidden = true
   ctx.els.resultStatusTag.textContent = 'Estimated preview'
   ctx.els.checkAreaButton.disabled = !navigator.onLine || !ctx.state.account
@@ -234,6 +239,7 @@ export const invalidatePreview = (ctx: AppContext): void => {
   els.previewPanel.hidden = true
   state.areaCheck = null
   els.stopAreaButton.hidden = true
+  els.checkMoreButton.hidden = true
   els.checkAreaButton.disabled = true
   els.areaResult.textContent = ''
   els.areaJourney.hidden = true
@@ -264,6 +270,7 @@ const displayPreview = (
     checkedDepartures: new Set(),
     checksPerformed: 0,
     hasRun: false,
+    hasMore: false,
   }
   state.workplace = preview.workplace
   state.matches = []

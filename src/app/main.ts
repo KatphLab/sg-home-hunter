@@ -105,6 +105,10 @@ const wireUiEvents = (ctx: AppContext): void => {
     'click',
     () => void checkSelectedArea(ctx),
   )
+  els.checkMoreButton.addEventListener(
+    'click',
+    () => void checkSelectedArea(ctx),
+  )
   els.stopAreaButton.addEventListener('click', () => stopActiveSearch(ctx))
   window.addEventListener('online', () => syncConnectivity(ctx))
   window.addEventListener('offline', () => syncConnectivity(ctx))

@@ -85,6 +85,7 @@ export interface AppElements {
   readonly areaStopSelect: HTMLSelectElement
   readonly areaSummary: HTMLElement
   readonly checkAreaButton: HTMLButtonElement
+  readonly checkMoreButton: HTMLButtonElement
   readonly stopAreaButton: HTMLButtonElement
   readonly areaResult: HTMLElement
   readonly areaJourney: HTMLElement
@@ -157,6 +158,7 @@ export const collectAppElements = (): AppElements => ({
   areaStopSelect: requireElementOfType('area-stop-select', HTMLSelectElement),
   areaSummary: requireElement('area-summary'),
   checkAreaButton: requireElementOfType('check-area-btn', HTMLButtonElement),
+  checkMoreButton: requireElementOfType('check-more-btn', HTMLButtonElement),
   stopAreaButton: requireElementOfType('stop-area-btn', HTMLButtonElement),
   areaResult: requireElement('area-result'),
   areaJourney: requireElement('area-journey'),

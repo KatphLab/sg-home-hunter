@@ -321,6 +321,127 @@ test.describe('House Hunter PWA acceptance', () => {
     expect(new Set(probes.map((probe) => `${probe.start}@${probe.time}`)).size).toBe(6)
   })
 
+  test('continues only new departures in bounded batches until planned probes are exhausted', async ({
+    page, context,
+  }) => {
+    const probes: RequestedProbe[] = []
+    await context.route('**/api/public/routingsvc/route*', (route) => {
+      probes.push(requestedProbe(route))
+      return fulfillJson(route, 200, { plan: { itineraries: [] } })
+    })
+    await previewRiver(page)
+    const more = page.getByRole('button', { name: 'Check more departures' })
+    const outcome = page.locator('#area-result')
+    await expect(more).toBeHidden()
+    await page.click('#check-area-btn')
+    await expect(outcome).toContainText('3 checks')
+    await expect(more).toBeVisible()
+    await more.click()
+    await expect(outcome).toContainText('Not confirmed')
+    await expect(outcome).toContainText('3 checks')
+    await expect(more).toBeVisible()
+    expect(probes.map((probe) => probe.start)).toEqual([
+      '1.3,103.85', '1.3005,103.85', '1.3,103.85',
+      '1.3005,103.85', '1.3,103.85', '1.3005,103.85',
+    ])
+    await more.click()
+    await expect(outcome).toContainText('All planned departures for this area have been checked')
+    await expect(outcome).toContainText('2 checks')
+    await expect(outcome).not.toContainText('unreachable')
+    await expect(more).toBeHidden()
+    expect(probes).toHaveLength(8)
+    expect(new Set(probes.map((probe) => `${probe.start}@${probe.time}`)).size).toBe(8)
+    await selectArea(page, '11112')
+    await page.click('#check-area-btn')
+    await expect(outcome).toContainText('All planned departures')
+    await expect(outcome).toContainText('0 checks')
+    await expect(more).toBeHidden()
+    expect(probes).toHaveLength(8)
+  })
+
+  test('a later batch stops on actual in-area proof and overlapping selection reuses unchanged evidence', async ({
+    page, context,
+  }) => {
+    let searchDate = ''
+    const probes: RequestedProbe[] = []
+    await context.route('**/api/public/routingsvc/route*', (route) => {
+      probes.push(requestedProbe(route))
+      return fulfillJson(route, 200, {
+        plan: { itineraries: [actualJourney(searchDate, probes.length === 5)] },
+      })
+    })
+    searchDate = await previewRiver(page)
+    await page.click('#check-area-btn')
+    await expect(page.locator('#area-result')).toContainText('Not confirmed')
+    await expect(page.locator('#area-result')).toContainText('3 checks')
+    await page.getByRole('button', { name: 'Check more departures' }).click()
+    await expect(page.locator('#area-result')).toContainText('Confirmed')
+    await expect(page.locator('#area-result')).toContainText('2 checks')
+    expect(probes.map((probe) => probe.start)).toEqual([
+      '1.3,103.85', '1.3005,103.85', '1.3,103.85',
+      '1.3005,103.85', '1.3,103.85',
+    ])
+    expect(new Set(probes.map((probe) => `${probe.start}@${probe.time}`)).size).toBe(5)
+    await expect(page.locator('#check-more-btn')).toBeHidden()
+    const evidence = await page.locator('#area-journey').innerText()
+    expect(evidence).toContain(searchDate)
+    expect(evidence).toContain('11115 River Transfer')
+    await selectArea(page, '11116')
+    await page.click('#check-area-btn')
+    await expect(page.locator('#area-result')).toContainText('Confirmed')
+    await expect(page.locator('#area-result')).toContainText('0 checks')
+    await expect(page.locator('#area-journey')).toHaveText(evidence)
+    expect(probes).toHaveLength(5)
+  })
+
+  for (const change of ['workplace', 'search date', 'office start', 'ride cap'] as const) {
+    test(`starts fresh verification after changing ${change}, without reusing old proof`, async ({
+      page, context,
+    }) => {
+      await page.clock.setFixedTime(new Date('2026-11-25T12:00:00+08:00'))
+      let searchDate = ''
+      let confirmed = false
+      const probes: RequestedProbe[] = []
+      await context.route('**/api/public/routingsvc/route*', (route) => {
+        probes.push(requestedProbe(route))
+        return fulfillJson(route, 200, {
+          plan: { itineraries: confirmed ? [] : [actualJourney(searchDate, true)] },
+        })
+      })
+      searchDate = await previewRiver(page)
+      await page.click('#check-area-btn')
+      await expect(page.locator('#area-result')).toContainText('Confirmed')
+      confirmed = true
+      if (change === 'office start') await page.fill('#office-start-input', '08:55')
+      if (change === 'ride cap') await page.fill('#ride-cap-input', '25')
+      if (change === 'search date') {
+        await page.clock.setFixedTime(new Date('2026-11-26T12:00:00+08:00'))
+      }
+      if (change === 'workplace') {
+        await context.route('**/api/common/elastic/search*', (route) =>
+          fulfillJson(route, 200, { results: [{
+            POSTAL: '018988', LATITUDE: '1.2790', LONGITUDE: '103.8536', ADDRESS: 'Other workplace',
+          }] }),
+        )
+        await page.fill('#postal-input', '018988')
+      }
+      await page.click('#start-search-btn')
+      await expect(page.locator('#result-status-tag')).toHaveText('Estimated preview')
+      await expect(page.locator('#area-journey')).toBeHidden()
+      await expect(page.locator('.stop-row-btn[data-stop-id="11115"]')).toHaveCount(0)
+      if (change === 'search date') {
+        await expect(page.locator('#planned-search-date')).not.toHaveText(searchDate)
+      }
+      await selectArea(page, '11111')
+      await page.click('#check-area-btn')
+      await expect(page.locator('#area-result')).toContainText('Not confirmed')
+      await expect(page.locator('#area-result')).toContainText('3 checks')
+      await expect(page.locator('#area-journey')).toBeHidden()
+      expect(probes).toHaveLength(4)
+      if (change === 'ride cap') expect(probes[1]).toEqual(probes[0])
+    })
+  }
+
   for (const arrival of ['08:45', '09:00']) {
     test(`retains outside proof then stops on an unestimated transfer, including final walk to ${arrival}`, async ({
       page, context,
