@@ -251,11 +251,16 @@ export const getSingaporeDateFromInstant = (instantMs: number): string => {
   return new Date(instantMs + SINGAPORE_OFFSET_MS).toISOString().slice(0, 10)
 }
 
-export const formatSingaporeTime = (instantMs: number): string => {
+export const formatSingaporeTime = (
+  instantMs: number,
+  includeSeconds = false,
+): string => {
   if (!Number.isFinite(instantMs)) {
     throw new Error('Instant must be a finite epoch millisecond timestamp')
   }
-  return new Date(instantMs + SINGAPORE_OFFSET_MS).toISOString().slice(11, 16)
+  return new Date(instantMs + SINGAPORE_OFFSET_MS)
+    .toISOString()
+    .slice(11, includeSeconds ? 19 : 16)
 }
 
 export const parseSingaporeDateTimeMs = (

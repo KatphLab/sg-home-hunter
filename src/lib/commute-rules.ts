@@ -48,26 +48,23 @@ const readOptionalString = (
   return trimmed.length > 0 ? trimmed : null
 }
 
+const readStopId = (from: Record<string, unknown>): string | undefined => {
+  const code = from['stopCode']
+  if (code !== undefined && code !== null && code !== '') {
+    return typeof code === 'string' ? code : undefined
+  }
+  const id = from['stopId']
+  return typeof id === 'string' ? id.split(':').at(-1) : undefined
+}
+
 const extractBoardingStopId = (leg: Record<string, unknown>): string => {
   const from = leg['from']
   if (!isRecord(from)) {
     throw new Error('Malformed transit leg: missing from object')
   }
-  const rawCode = from['stopCode']
-  if (rawCode !== undefined && rawCode !== null) {
-    if (typeof rawCode !== 'string') {
-      throw new Error('Malformed transit leg stopCode: expected string')
-    }
-    if (rawCode.length > 0) {
-      return rawCode
-    }
-  }
-  const rawStopId = from['stopId']
-  if (typeof rawStopId === 'string' && rawStopId.length > 0) {
-    const suffix = rawStopId.split(':').at(-1)
-    if (suffix !== undefined && suffix.length > 0) {
-      return suffix
-    }
+  const id = readStopId(from)
+  if (id) {
+    return id
   }
   throw new Error('Malformed transit leg: missing boarding stop identifier')
 }
@@ -88,13 +85,14 @@ const extractService = (
   return { id, name, mode }
 }
 
-interface ParsedLegSummary {
-  readonly transitCount: number
-  readonly firstBoardingAtMs: number
-  readonly firstBoardingStopId: string
+interface ParsedLeg {
+  readonly record: Record<string, unknown>
+  readonly startTime: number
+  readonly endTime: number
+  readonly mode: string
   readonly rideMs: number
-  readonly services: readonly JourneyService[]
-  readonly hasUnsupportedMode: boolean
+  readonly service: JourneyService | null
+  readonly stopId: string | null
 }
 
 const parseLegTiming = (
@@ -131,47 +129,28 @@ const inspectLegs = (
   rawLegs: unknown,
   itinStart: number,
   itinEnd: number,
-): ParsedLegSummary => {
+): ParsedLeg[] => {
   if (!Array.isArray(rawLegs) || rawLegs.length === 0) {
     throw new Error('Malformed itinerary: legs must be a non-empty array')
   }
 
   let prevEnd = itinStart
-  let transitCount = 0
-  let firstBoardingAtMs = 0
-  let firstBoardingStopId = ''
-  let rideMs = 0
-  let hasUnsupportedMode = false
-  const services: JourneyService[] = []
-
-  for (const rawLeg of rawLegs) {
+  return rawLegs.map((rawLeg) => {
     const leg = parseLegTiming(rawLeg, prevEnd, itinEnd)
+    const service = isTransitMode(leg.mode)
+      ? extractService(leg.record, leg.mode)
+      : null
+    const interlined = readOptionalBoolean(
+      leg.record,
+      'interlineWithPreviousLeg',
+    )
+    const stopId =
+      service && !interlined ? extractBoardingStopId(leg.record) : null
+    // An interlined passenger remains on board between the two service legs.
+    const rideMs = leg.endTime - (interlined ? prevEnd : leg.startTime)
     prevEnd = leg.endTime
-
-    if (leg.mode === 'WALK') {
-      continue
-    }
-    if (!isTransitMode(leg.mode)) {
-      hasUnsupportedMode = true
-      continue
-    }
-    if (transitCount === 0) {
-      firstBoardingAtMs = leg.startTime
-      firstBoardingStopId = extractBoardingStopId(leg.record)
-    }
-    transitCount += 1
-    rideMs += leg.endTime - leg.startTime
-    services.push(extractService(leg.record, leg.mode))
-  }
-
-  return {
-    transitCount,
-    firstBoardingAtMs,
-    firstBoardingStopId,
-    rideMs,
-    services,
-    hasUnsupportedMode,
-  }
+    return { ...leg, service, stopId, rideMs }
+  })
 }
 
 export const isDestinationStationMatch = (
@@ -199,11 +178,54 @@ export const createDestinationStationJourney = (
   }
 }
 
-export const evaluateItinerary = (
-  candidateStop: Stop,
+interface BoardingHint {
+  stopId: string
+  departureMs: number
+}
+
+const collectHints = (
+  hints: BoardingHint[],
+  leg: ParsedLeg,
+  earliestDeparture: number,
+  searchDate: string,
+): void => {
+  const stops = leg.record['intermediateStops']
+  if (!Array.isArray(stops)) {
+    return
+  }
+  for (const stop of stops) {
+    if (
+      !isRecord(stop) ||
+      stop['pickupType'] === 1 ||
+      stop['pickupType'] === 'NONE'
+    ) {
+      continue
+    }
+    const departureMs = stop['departure']
+    if (
+      !isFiniteNonNegativeNumber(departureMs) ||
+      departureMs < earliestDeparture ||
+      departureMs > leg.endTime ||
+      getSingaporeDateFromInstant(departureMs) !== searchDate
+    ) {
+      continue
+    }
+    const stopId = readStopId(stop)
+    if (stopId) {
+      hints.push({ stopId, departureMs })
+    }
+  }
+}
+
+interface Boardings {
+  journeys: QualifyingJourney[]
+  hints: BoardingHint[]
+}
+
+export const evaluateBoardings = (
   constraints: SearchConstraints,
   rawItinerary: unknown,
-): QualifyingJourney | null => {
+): Boardings => {
   if (!isRecord(rawItinerary)) {
     throw new Error('Malformed itinerary: expected object')
   }
@@ -221,56 +243,67 @@ export const evaluateItinerary = (
     rawItinerary,
     'walkLimitExceeded',
   )
-  const summary = inspectLegs(rawItinerary['legs'], itinStart, itinEnd)
-
-  if (
-    walkLimitExceeded ||
-    summary.hasUnsupportedMode ||
-    summary.transitCount === 0 ||
-    summary.firstBoardingStopId !== candidateStop.id
-  ) {
-    return null
-  }
+  const legs = inspectLegs(rawItinerary['legs'], itinStart, itinEnd)
+  const result: Boardings = { journeys: [], hints: [] }
 
   const deadlineMs = parseSingaporeDateTimeMs(
     constraints.searchDate,
     constraints.officeStart,
   )
   const windowStartMs = deadlineMs - ARRIVAL_WINDOW_EARLY_MS
-  const rideCapMs = constraints.rideCapMinutes * 60_000
 
   if (
+    walkLimitExceeded ||
     itinEnd < windowStartMs ||
     itinEnd > deadlineMs ||
-    summary.rideMs > rideCapMs ||
-    getSingaporeDateFromInstant(summary.firstBoardingAtMs) !==
-      constraints.searchDate ||
     getSingaporeDateFromInstant(itinEnd) !== constraints.searchDate
   ) {
-    return null
+    return result
   }
 
-  return {
-    stopId: candidateStop.id,
-    searchDate: constraints.searchDate,
-    boardingAtMs: summary.firstBoardingAtMs,
-    arrivalAtMs: itinEnd,
-    rideMs: summary.rideMs,
-    services: summary.services,
-    isAtDestination: false,
-  }
+  collectBoardings(legs, constraints, itinEnd, result)
+  return result
 }
 
-export const findFirstQualifyingJourney = (
-  candidateStop: Stop,
+const collectBoardings = (
+  legs: ParsedLeg[],
   constraints: SearchConstraints,
-  rawItineraries: readonly unknown[],
-): QualifyingJourney | null => {
-  for (const itinerary of rawItineraries) {
-    const match = evaluateItinerary(candidateStop, constraints, itinerary)
-    if (match !== null) {
-      return match
+  arrivalAtMs: number,
+  result: Boardings,
+): void => {
+  const rideCapMs = constraints.rideCapMinutes * 60_000
+  let rideMs = 0
+  const services: JourneyService[] = []
+  for (const leg of legs.reverse()) {
+    if (leg.mode === 'WALK') {
+      continue
+    }
+    if (leg.service === null) {
+      break
+    }
+    const earliestDeparture = Math.max(
+      leg.startTime,
+      leg.endTime - (rideCapMs - rideMs),
+    )
+    collectHints(result.hints, leg, earliestDeparture, constraints.searchDate)
+    rideMs += leg.rideMs
+    services.unshift(leg.service)
+    if (rideMs > rideCapMs) {
+      break
+    }
+    if (
+      leg.stopId !== null &&
+      getSingaporeDateFromInstant(leg.startTime) === constraints.searchDate
+    ) {
+      result.journeys.unshift({
+        stopId: leg.stopId,
+        searchDate: constraints.searchDate,
+        boardingAtMs: leg.startTime,
+        arrivalAtMs,
+        rideMs,
+        services: [...services],
+        isAtDestination: false,
+      })
     }
   }
-  return null
 }

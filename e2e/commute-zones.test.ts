@@ -3,12 +3,25 @@ import { expect, type Page, type Route, test } from '@playwright/test'
 const TEST_INVENTORY_TSV = [
   'inventoryDate\t2026-11-20',
   'id\tkind\tname\tlatitude\tlongitude',
+  '03218\tbus\tMarina Gardens Opp\t1.279100\t103.854000',
   '44009\tbus\tBukit Panjang Ring\t1.382000\t103.760000',
   '44011\tbus\tBlk 418 Fajar\t1.388000\t103.765000',
   '65009\tbus\tPunggol Temp Int\t1.403600\t103.902200',
   '88888\tbus\tChangi Village\t1.389000\t103.988000',
+  '88889\tbus\tChangi Ferry\t1.390000\t103.990000',
   'CC15\trail\tBishan\t1.351400\t103.848200',
+  'CC16\trail\tMarymount\t1.348700\t103.839400',
   'NS17\trail\tBishan\t1.351400\t103.848200',
+].join('\n')
+
+const TEST_NETWORK_TSV = [
+  'networkDate\t2026-11-20',
+  'service\tdirection\tvisits',
+  '972\t1\t44009 0530 2330 0530 2330 0530 2330|03218 0552 2352 0552 2352 0552 2352',
+  '922\t1\t44011 0530 2330 0530 2330 0530 2330|03218 0552 2352 0552 2352 0552 2352',
+  '116\t1\t65009 0530 2330 0530 2330 0530 2330|03218 0552 2352 0552 2352 0552 2352',
+  '50\t1\t65009 0530 2330 0530 2330 0530 2330|NS17 0545 2345 0545 2345 0545 2345',
+  '999\t1\t88888 0530 2330 0530 2330 0530 2330|88889 0535 2335 0535 2335 0535 2335',
 ].join('\n')
 
 const EMPTY_PNG = Buffer.from(
@@ -37,7 +50,7 @@ const makeItinerary = (
     mode: svc.mode,
     startTime: svc.boardMs,
     endTime: svc.endMs,
-    from: { stopCode: idx === 0 ? boardStopCode : 'NE17' },
+    from: { stopCode: idx === 0 ? boardStopCode : 'NS17' },
     routeShortName: svc.routeShortName,
     routeId: svc.routeShortName,
   }))
@@ -78,17 +91,26 @@ const stubTilesAndInventory = async (page: Page): Promise<void> => {
       body: TEST_INVENTORY_TSV,
     }),
   )
+  await page.context().route('**/data/bus-network.tsv', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/tab-separated-values; charset=utf-8',
+      body: TEST_NETWORK_TSV,
+    }),
+  )
 }
 
 const handlePostalSearchRoute = async (
   route: Route,
   pass2Gate: Promise<void>,
+  attemptsByStart: Map<string, number>,
 ): Promise<void> => {
   const url = new URL(route.request().url())
   const start = url.searchParams.get('start') ?? ''
-  const time = url.searchParams.get('time') ?? ''
+  const attempt = (attemptsByStart.get(start) ?? 0) + 1
+  attemptsByStart.set(start, attempt)
 
-  if (time === '08:10:00' && start.startsWith('1.382')) {
+  if (attempt === 1 && start.startsWith('1.382')) {
     await fulfillJson(route, 200, {
       plan: {
         itineraries: [
@@ -106,7 +128,7 @@ const handlePostalSearchRoute = async (
     return
   }
 
-  if (time === '08:10:00' && start.startsWith('1.388')) {
+  if (attempt === 1 && start.startsWith('1.388')) {
     await fulfillJson(route, 200, {
       plan: {
         itineraries: [
@@ -124,7 +146,7 @@ const handlePostalSearchRoute = async (
     return
   }
 
-  if (time === '08:20:00' && start.startsWith('1.4036')) {
+  if (attempt === 2 && start.startsWith('1.4036')) {
     await pass2Gate
     await fulfillJson(route, 200, {
       plan: {
@@ -142,7 +164,7 @@ const handlePostalSearchRoute = async (
               },
               {
                 mode: 'SUBWAY',
-                routeShortName: 'NE',
+                routeShortName: 'NS',
                 boardMs: sgtIsoMs('08:42'),
                 endMs: sgtIsoMs('08:54'),
               },
@@ -168,13 +190,36 @@ const signInViaUi = async (page: Page): Promise<void> => {
 }
 
 test.describe('House Hunter PWA acceptance', () => {
+  test.beforeEach(async ({ page, context }) => {
+    await stubTilesAndInventory(page)
+    await context.route('**/api/auth/post/getToken', (route) =>
+      fulfillJson(route, 200, {
+        access_token: 'mock-jwt',
+        expiry_timestamp: 1_900_000_000,
+      }),
+    )
+    await context.route('**/api/common/elastic/search*', (route) => {
+      const postal = new URL(route.request().url()).searchParams.get(
+        'searchVal',
+      )
+      const address = {
+        POSTAL: '018989',
+        LATITUDE: '1.2789',
+        LONGITUDE: '103.8536',
+        ADDRESS: '18 MARINA GARDENS DR',
+      }
+      return fulfillJson(route, 200, {
+        results: postal === address.POSTAL ? [address] : [],
+      })
+    })
+  })
+
   test('reports unreadable sign-in response without blaming password', async ({
     page,
   }) => {
-    await stubTilesAndInventory(page)
-    await page.route('**/api/auth/post/getToken', (route) =>
-      route.abort('failed'),
-    )
+    await page
+      .context()
+      .route('**/api/auth/post/getToken', (route) => route.abort('failed'))
 
     await page.goto('/')
     await page.fill('#onemap-email', 'commuter@example.com')
@@ -187,42 +232,57 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(alert).not.toContainText('Wrong password')
   })
 
+  test('blocks duplicate postal submission during lookup and unlocks after lookup failure', async ({
+    page,
+  }) => {
+    const lookupGate = Promise.withResolvers<void>()
+    let lookupAttempts = 0
+    await page
+      .context()
+      .route('**/api/common/elastic/search*', async (route) => {
+        lookupAttempts += 1
+        await lookupGate.promise
+        await fulfillJson(route, 503, { error: 'lookup unavailable' })
+      })
+
+    await page.goto('/')
+    await signInViaUi(page)
+    await page.fill('#postal-input', '018989')
+    const startButton = page.locator('#start-search-btn')
+    await startButton.click()
+    await expect.poll(() => lookupAttempts).toBe(1)
+    try {
+      await expect(startButton).toBeDisabled()
+      // Native form submission must also respect the in-flight lookup.
+      await page.locator('#search-form').evaluate((form: HTMLFormElement) => {
+        form.requestSubmit()
+      })
+    } finally {
+      lookupGate.resolve()
+    }
+
+    await expect(page.locator('#search-error')).toHaveText(
+      'OneMap postal lookup failed (HTTP 503).',
+    )
+    await expect(startButton).toBeEnabled()
+    expect(lookupAttempts).toBe(1)
+
+    await startButton.click()
+    await expect.poll(() => lookupAttempts).toBe(2)
+  })
+
   test('streams distant-before-nearby patches, supports overlap/disconnected selection, and verifies station identity', async ({
     page,
+    context,
   }) => {
     test.setTimeout(60_000)
     await page.clock.install({ time: new Date('2026-05-29T09:00:00+08:00') })
-    await stubTilesAndInventory(page)
-
-    await page.route('**/api/auth/post/getToken', (route) =>
-      fulfillJson(route, 200, {
-        access_token: 'mock-jwt',
-        expiry_timestamp: 1_900_000_000,
-      }),
-    )
-
-    await page.route('**/api/common/elastic/search*', (route) => {
-      const url = new URL(route.request().url())
-      const postal = url.searchParams.get('searchVal')
-      return fulfillJson(route, 200, {
-        results:
-          postal === '018989'
-            ? [
-                {
-                  POSTAL: '018989',
-                  LATITUDE: '1.2789',
-                  LONGITUDE: '103.8536',
-                  ADDRESS: '18 MARINA GARDENS DR',
-                },
-              ]
-            : [],
-      })
-    })
 
     const pass2Gate = Promise.withResolvers<void>()
+    const postalAttempts = new Map<string, number>()
 
-    await page.route('**/api/public/routingsvc/route*', (route) =>
-      handlePostalSearchRoute(route, pass2Gate.promise),
+    await context.route('**/api/public/routingsvc/route*', (route) =>
+      handlePostalSearchRoute(route, pass2Gate.promise, postalAttempts),
     )
 
     await page.goto('/')
@@ -255,13 +315,14 @@ test.describe('House Hunter PWA acceptance', () => {
     await page.fill('#ride-cap-input', '30')
     await page.click('#start-search-btn')
 
-    // Mid-search assertions: pass 1 finished (all 6 stops tried), only 2 distant overlapping stops matched,
-    // search is STILL running while pass 2 waits on 65009!
-    await expect(page.locator('#stops-tried-value')).toHaveText('6 / 6')
+    // Mid-search assertions: pass 1 finished (3 reachable candidate stops tried, 88888 pruned),
+    // 2 distant overlapping stops matched, search is STILL running while pass 2 waits on 65009!
+    await expect(page.locator('#stops-tried-value')).toHaveText('3 / 9')
     await expect(page.locator('#stops-matched-value')).toHaveText('2')
     await expect(page.locator('#result-status-tag')).toContainText(
       'Searching — Pass 2',
     )
+    expect(postalAttempts.get('1.389,103.988')).toBeUndefined()
     await expect(
       page.locator('.stop-plaque-marker[data-stop-id="44009"]'),
     ).toBeVisible()
@@ -282,7 +343,7 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#result-status-tag')).toHaveText('Completed', {
       timeout: 25_000,
     })
-    await expect(page.locator('#stops-matched-value')).toHaveText('3')
+    await expect(page.locator('#stops-matched-value')).toHaveText('4')
 
     // Select overlapping stop 44011 on the map and verify its journey card.
     await page.click('.stop-plaque-marker[data-stop-id="44011"]')
@@ -303,21 +364,27 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#selected-boarding-time')).toHaveText('08:25')
     await expect(page.locator('#selected-arrival-time')).toHaveText('08:58')
     await expect(page.locator('#selected-services')).toContainText(
-      'Bus 116 → MRT NE',
+      'Bus 116 → MRT NS',
     )
+
+    // The same itinerary proves boarding at the transfer station after the bus.
+    await page.click('.stop-plaque-marker[data-stop-id="NS17"]')
+    await expect(page.locator('#selected-boarding-time')).toHaveText('08:42')
+    await expect(page.locator('#selected-arrival-time')).toHaveText('08:58')
+    await expect(page.locator('#selected-services')).toHaveText('MRT NS')
 
     // Station workplace test: choose NS17, verify NS17 qualifies at 09:00 with 0 min ride & 0 routing calls,
     // CC15 at the same point does NOT auto-qualify, and 65009 qualifies via bus+walk.
     const routeRequestsToStationCoords: string[] = []
-    await page.unroute('**/api/public/routingsvc/route*')
-    await page.route('**/api/public/routingsvc/route*', (route) => {
+    await context.unroute('**/api/public/routingsvc/route*')
+    await context.route('**/api/public/routingsvc/route*', (route) => {
       const url = new URL(route.request().url())
       const start = url.searchParams.get('start') ?? ''
       const time = url.searchParams.get('time') ?? ''
       if (start.startsWith('1.3514')) {
         routeRequestsToStationCoords.push(`${start}@${time}`)
       }
-      if (time === '08:10:00' && start.startsWith('1.4036')) {
+      if (start.startsWith('1.4036')) {
         return fulfillJson(route, 200, {
           plan: {
             itineraries: [
@@ -349,7 +416,7 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#result-status-tag')).toHaveText('Completed', {
       timeout: 25_000,
     })
-    // Only CC15 queried once per pass; NS17 made 0 routing requests.
+    // Only CC15 queried once per candidate departure; NS17 made 0 routing requests.
     const passCount = await page.locator('#stops-matched-value').textContent()
     expect(passCount).toBe('2')
     await expect(
@@ -367,11 +434,11 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#selected-ride-duration')).toHaveText('0 min')
     await expect(page.locator('#selected-boarding-time')).toHaveText('09:00')
     await expect(page.locator('#selected-arrival-time')).toHaveText('09:00')
-    // CC15 was queried across the schedule, NS17 was never queried (only 1 stop per pass at 1.3514)
-    expect(
-      routeRequestsToStationCoords.filter((r) => r.endsWith('@08:10:00'))
-        .length,
-    ).toBe(1)
+    // CC15 was queried while NS17 was never queried (every start@time at 1.3514 is unique).
+    expect(routeRequestsToStationCoords.length).toBeGreaterThanOrEqual(1)
+    expect(new Set(routeRequestsToStationCoords).size).toBe(
+      routeRequestsToStationCoords.length,
+    )
   })
 
   test('preserves last completed search across partial stop, close, and offline reload without sign-in', async ({
@@ -380,31 +447,15 @@ test.describe('House Hunter PWA acceptance', () => {
   }) => {
     test.setTimeout(60_000)
     await page.clock.install({ time: new Date('2026-05-29T09:00:00+08:00') })
-    await stubTilesAndInventory(page)
-
-    await page.route('**/api/auth/post/getToken', (route) =>
-      fulfillJson(route, 200, {
-        access_token: 'mock-jwt',
-        expiry_timestamp: 1_900_000_000,
-      }),
-    )
-    await page.route('**/api/common/elastic/search*', (route) =>
-      fulfillJson(route, 200, {
-        results: [
-          {
-            POSTAL: '018989',
-            LATITUDE: '1.2789',
-            LONGITUDE: '103.8536',
-            ADDRESS: '18 MARINA GARDENS DR',
-          },
-        ],
-      }),
-    )
-    await page.route('**/api/public/routingsvc/route*', (route) => {
+    let failedFirstPunggolProbe = false
+    await context.route('**/api/public/routingsvc/route*', (route) => {
       const url = new URL(route.request().url())
       const start = url.searchParams.get('start') ?? ''
-      const time = url.searchParams.get('time') ?? ''
-      if (time === '08:10:00' && start.startsWith('1.4036')) {
+      if (start.startsWith('1.4036')) {
+        if (!failedFirstPunggolProbe) {
+          failedFirstPunggolProbe = true
+          return fulfillJson(route, 400, { error: 'routing request failed' })
+        }
         return fulfillJson(route, 200, {
           plan: {
             itineraries: [
@@ -439,10 +490,11 @@ test.describe('House Hunter PWA acceptance', () => {
     await expect(page.locator('#result-status-tag')).toHaveText('Completed', {
       timeout: 25_000,
     })
+    await expect(page.locator('#search-error')).toBeHidden()
 
     // Search B: start station search with a held request, then click Stop search -> Partial result.
-    await page.unroute('**/api/public/routingsvc/route*')
-    await page.route('**/api/public/routingsvc/route*', async (route) => {
+    await context.unroute('**/api/public/routingsvc/route*')
+    await context.route('**/api/public/routingsvc/route*', async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 250))
       await fulfillJson(route, 200, { plan: { itineraries: [] } })
     })
@@ -492,22 +544,41 @@ test.describe('House Hunter PWA acceptance', () => {
       page.locator('.stop-row-btn[data-stop-id="65009"]'),
     ).toBeVisible()
 
-    // Go back online, start Search B again, and simulate closing/reloading mid-search -> Search A still survives offline!
-    await context.setOffline(false)
-    await page.reload()
-    await signInViaUi(page)
-    await page.click('input[name="workplace-kind"][value="station"]')
-    await page.selectOption('#station-select', 'NS17')
-    await page.click('#start-search-btn')
-    await expect(page.locator('#stop-search-btn')).toBeVisible()
-
-    await context.setOffline(true)
-    await page.reload()
-    await expect(page.locator('#active-constraints-summary')).toContainText(
-      'Postal 018989',
-    )
-    await expect(
-      page.locator('.stop-row-btn[data-stop-id="65009"]'),
-    ).toBeVisible()
+    // Neither closing a running search nor failed OneMap requests may replace Search A.
+    for (const interruption of ['reload', 'routing failure']) {
+      await context.setOffline(false)
+      await page.reload()
+      await signInViaUi(page)
+      if (interruption === 'routing failure') {
+        await context.route('**/api/public/routingsvc/route*', (route) =>
+          fulfillJson(route, 400, { error: 'upstream outage' }),
+        )
+      }
+      await page.click('input[name="workplace-kind"][value="station"]')
+      await page.selectOption('#station-select', 'NS17')
+      await page.click('#start-search-btn')
+      if (interruption === 'reload') {
+        await expect(page.locator('#stop-search-btn')).toBeVisible()
+      } else {
+        await expect(page.locator('#result-status-tag')).toHaveText(
+          'Partial result',
+          { timeout: 25_000 },
+        )
+        await expect(page.locator('#search-error')).toContainText(
+          'was not saved offline',
+        )
+      }
+      await context.setOffline(true)
+      await page.reload()
+      await expect(page.locator('#result-status-tag')).toHaveText(
+        'Saved offline result',
+      )
+      await expect(page.locator('#active-constraints-summary')).toContainText(
+        'Postal 018989',
+      )
+      await expect(
+        page.locator('.stop-row-btn[data-stop-id="65009"]'),
+      ).toBeVisible()
+    }
   })
 })

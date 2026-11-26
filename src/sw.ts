@@ -1,12 +1,14 @@
-const CACHE_NAME = 'house-hunter-shell-v1'
+const CACHE_NAME = 'house-hunter-shell-v5'
 const PRECACHE_PATHS = [
   './',
   './index.html',
   './app.js',
+  './planner-worker.js',
   './styles.css',
   './leaflet.css',
   './manifest.webmanifest',
   './data/stops.tsv',
+  './data/bus-network.tsv',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',

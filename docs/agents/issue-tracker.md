@@ -5,6 +5,7 @@ Issues and specs for this repo live as Markdown files in `.scratch/`.
 ## Conventions
 
 - One feature per directory: `.scratch/<feature-slug>/`.
+- Keep `.scratch/<feature-slug>/` for Markdown specs, issues, and reports; place large or ephemeral caches and fixtures under `node_modules/.cache/<feature-slug>/` (ignored by Git and Biome).
 - The spec is `.scratch/<feature-slug>/spec.md`.
 - Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file.
 - Triage state is recorded as a `Status:` line near the top of each issue file. See `triage-labels.md` for the role strings.

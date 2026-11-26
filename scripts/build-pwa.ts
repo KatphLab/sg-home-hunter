@@ -38,6 +38,10 @@ const main = async (): Promise<void> => {
 
   await Promise.all([
     buildBundle(resolve(ROOT_DIR, 'src/app/main.ts'), 'app.js'),
+    buildBundle(
+      resolve(ROOT_DIR, 'src/app/planner-worker.ts'),
+      'planner-worker.js',
+    ),
     buildBundle(resolve(ROOT_DIR, 'src/sw.ts'), 'sw.js'),
   ])
 
