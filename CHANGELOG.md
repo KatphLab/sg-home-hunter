@@ -2,6 +2,7 @@
 
 ## 2026-11-26
 
+- Continue neighbourhood checks in batches of at most three new planned departures, without repeating checked departures across overlapping areas. Reopen the last successful checked area and its verified journey evidence offline; estimates and unsuccessful checks stay unsaved.
 - Add **Check within 500 m**: verify at most three planned departures, reuse same-search actual boarding evidence and stop normally on the first in-area proof. Show exact journeys outside the map for keyboard/mobile use; distinguish empty estimates, bounded misses, routing/sign-in errors and cancellation. Remove the obsolete global scheduler and its scheduler-only tests; retain qualification-rule tests and the existing offline snapshot loader without writing partial checks.
 - Replace automatic global routing scans with a local, radius-limited estimated preview that pauses before routing. Distinguish ride-cap-margin time bands from qualifying journeys, support map or keyboard/mobile 500 m area selection, clear previews on changed inputs or session, and preserve the existing completed offline map.
 - Limit direct OneMap requests to a straight-line radius based on the ride cap (13.7 km for 30 minutes). Keep qualifying stops outside the radius when an itinerary already proves them.
