@@ -9,6 +9,7 @@
 ## Decisions-so-far
 
 - [01 — Live benchmark](issues/01-benchmark-three-checks.md): resolved. [Report](benchmark.md) found eight first-probe confirmations, two empty previews and two inconclusive areas after six probes. Keep three as the initial ceiling, not a claimed optimum or accuracy guarantee.
+- [02 — Estimated preview](issues/02-preview-and-select-neighbourhood.md): resolved. Search now pauses after local planning; estimate bands and pointer/keyboard area selection make no routing calls. Browser proof covers the preview, cancellation and preservation of the existing offline result.
 - Preview is estimated evidence only. Verification must find a qualifying boarding within the selected 500 m circle; outside-only proof does not answer that selection.
 - Browser/PWA flow is the agreed acceptance seam. Preserve the existing completed offline result when previews or area checks do not succeed.
 
