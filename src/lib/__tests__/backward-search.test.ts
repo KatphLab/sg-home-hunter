@@ -152,6 +152,120 @@ describe('backward-search verification', () => {
     })
   })
 
+  it('confirms timed pickups and supersedes pending probes using the remaining journey', async () => {
+    const connection = {
+      ...bus(transfer, '08:35', '08:55'),
+      routeShortName: '87',
+    }
+    const pickup = { stopCode: last.id, departure: time('08:20') }
+    const itinerary = (from: Stop, visits: readonly unknown[]) => ({
+      startTime: time('08:05'),
+      endTime: time('08:59'),
+      legs: [
+        { ...bus(from, '08:05', '08:30'), intermediateStops: visits },
+        connection,
+        { mode: 'WALK', startTime: connection.endTime, endTime: time('08:59') },
+      ],
+    })
+    const calls: string[] = []
+    const result = await verify({
+      plan: {
+        leads: [interchange, origin, last, transfer].map(lead),
+        uncoveredStopIds: [],
+      },
+      routeStop: (from) => {
+        calls.push(from.id)
+        if (from === interchange)
+          return Promise.resolve([itinerary(from, [pickup])])
+        return Promise.resolve(
+          from === origin
+            ? [
+                itinerary(from, [
+                  { ...pickup, pickupType: 0 },
+                  {
+                    stopCode: outside.id,
+                    departure: time('08:22'),
+                    pickupType: 'SCHEDULED',
+                  },
+                  {
+                    stopCode: interchange.id,
+                    departure: time('08:19'),
+                    pickupType: 0,
+                  },
+                  {
+                    stopCode: destination.id,
+                    departure: time('08:23'),
+                    pickupType: 'NONE',
+                  },
+                  { stopCode: interchange.id, pickupType: 0 },
+                  {
+                    stopCode: 'unknown-stop',
+                    departure: time('08:25'),
+                    pickupType: 0,
+                  },
+                ]),
+              ]
+            : [],
+        )
+      },
+    })
+    expect(calls).toEqual([interchange.id, origin.id])
+    expect(
+      result.matches
+        .map(({ stop }) => stop.id)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual([last.id, outside.id, transfer.id])
+    expect(
+      result.matches.find(({ stop }) => stop === last)?.journey,
+    ).toMatchObject({
+      stopId: last.id,
+      boardingAtMs: pickup.departure,
+      rideMs: 30 * 60_000,
+      arrivalAtMs: time('08:59'),
+      services: [{ id: '381' }, { id: '87' }],
+    })
+  })
+
+  it.each([
+    ['2026-11-26', '09:01'],
+    ['2026-11-25', '08:59'],
+  ] as const)(
+    'does not reuse a pickup for an ineligible arrival on %s at %s',
+    async (date, arrival) => {
+      const departure = parseSingaporeDateTimeMs(date, '08:40')
+      const endTime = parseSingaporeDateTimeMs(date, arrival)
+      const result = await verify({
+        plan: { leads: [lead(origin)], uncoveredStopIds: [] },
+        routeStop: () =>
+          Promise.resolve([
+            {
+              startTime: departure,
+              endTime,
+              legs: [
+                {
+                  ...bus(origin, '08:40', arrival),
+                  startTime: departure,
+                  endTime,
+                  intermediateStops: [
+                    {
+                      stopCode: last.id,
+                      departure: departure + 60_000,
+                      pickupType: 0,
+                    },
+                  ],
+                },
+              ],
+            },
+          ]),
+      })
+      expect(result).toMatchObject({
+        status: 'completed',
+        failedQueries: 0,
+        matches: [],
+      })
+    },
+  )
+
   it('checks transitive hints after the final planned probe; hints alone never qualify', async () => {
     const calls: string[] = []
     const result = await verify({

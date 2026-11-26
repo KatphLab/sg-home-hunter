@@ -183,11 +183,17 @@ interface BoardingHint {
   departureMs: number
 }
 
-const collectHints = (
-  hints: BoardingHint[],
+type JourneySuffix = Pick<
+  QualifyingJourney,
+  'searchDate' | 'arrivalAtMs' | 'services'
+>
+
+const collectIntermediateBoardings = (
+  result: Boardings,
   leg: ParsedLeg,
   earliestDeparture: number,
-  searchDate: string,
+  downstreamRideMs: number,
+  suffix: JourneySuffix,
 ): void => {
   const stops = leg.record['intermediateStops']
   if (!Array.isArray(stops)) {
@@ -202,17 +208,26 @@ const collectHints = (
       continue
     }
     const departureMs = stop['departure']
+    const stopId = readStopId(stop)
     if (
+      !stopId ||
       !isFiniteNonNegativeNumber(departureMs) ||
       departureMs < earliestDeparture ||
       departureMs > leg.endTime ||
-      getSingaporeDateFromInstant(departureMs) !== searchDate
+      getSingaporeDateFromInstant(departureMs) !== suffix.searchDate
     ) {
       continue
     }
-    const stopId = readStopId(stop)
-    if (stopId) {
-      hints.push({ stopId, departureMs })
+    if (stop['pickupType'] === 0 || stop['pickupType'] === 'SCHEDULED') {
+      result.journeys.push({
+        ...suffix,
+        stopId,
+        boardingAtMs: departureMs,
+        rideMs: leg.endTime - departureMs + downstreamRideMs,
+        isAtDestination: false,
+      })
+    } else {
+      result.hints.push({ stopId, departureMs })
     }
   }
 }
@@ -273,7 +288,7 @@ const collectBoardings = (
 ): void => {
   const rideCapMs = constraints.rideCapMinutes * 60_000
   let rideMs = 0
-  const services: JourneyService[] = []
+  let services: readonly JourneyService[] = []
   for (const leg of legs.reverse()) {
     if (leg.mode === 'WALK') {
       continue
@@ -285,9 +300,10 @@ const collectBoardings = (
       leg.startTime,
       leg.endTime - (rideCapMs - rideMs),
     )
-    collectHints(result.hints, leg, earliestDeparture, constraints.searchDate)
+    services = [leg.service, ...services]
+    const suffix = { searchDate: constraints.searchDate, arrivalAtMs, services }
+    collectIntermediateBoardings(result, leg, earliestDeparture, rideMs, suffix)
     rideMs += leg.rideMs
-    services.unshift(leg.service)
     if (rideMs > rideCapMs) {
       break
     }
@@ -296,12 +312,10 @@ const collectBoardings = (
       getSingaporeDateFromInstant(leg.startTime) === constraints.searchDate
     ) {
       result.journeys.unshift({
+        ...suffix,
         stopId: leg.stopId,
-        searchDate: constraints.searchDate,
         boardingAtMs: leg.startTime,
-        arrivalAtMs,
         rideMs,
-        services: [...services],
         isAtDestination: false,
       })
     }
